@@ -1,6 +1,6 @@
 [project]
-name = "debug"
-description = "A simple debug library for dagger"
+name = "logger"
+description = "A simple logger library for dagger"
 version = "1.0.0"
 authors = [
     { name = "Yasmany Cubela Medina", email = "bitgandtter@wildbit.dev" }

@@ -1,5 +1,5 @@
 {
-  "name": "debug",
+  "name": "logger",
   "sdk": "python",
   "dependencies": [],
   "source": "dagger",
