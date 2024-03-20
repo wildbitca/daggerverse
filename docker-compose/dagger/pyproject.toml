@@ -1,0 +1,10 @@
+[project]
+name = "docker-compose"
+description = "Handle docker-compose files in python"
+version = "1.0.0"
+authors = [
+    { name = "Yasmany Cubela Medina", email = "bitgandtter@wildbit.dev" }
+]
+dependencies = [
+    "pyyaml>=6.0"
+]

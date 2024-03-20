@@ -1,0 +1,12 @@
+{
+  "name": "docker-compose",
+  "sdk": "python",
+  "dependencies": [
+    {
+      "name": "logger",
+      "source": "github.com/wildbitca/daggerverse/logger@03b83cb5f6c336494315621a7229c885d2acb8ca"
+    }
+  ],
+  "source": "dagger",
+  "engineVersion": "v0.10.2"
+}
