@@ -28,14 +28,26 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 ## Consuming a module
 
 ```sh
-dagger install github.com/wildbitca/daggerverse/slack@slack/v0.1.0
+dagger install https://github.com/wildbitca/daggerverse/slack@slack/v0.1.0
 ```
 
-The repository is **private**, so resolving the dependency needs git credentials on the
-runner. Pipelines pay for this with the `wildbit-ci-cd` App token they already mint:
+**Write the `https://` scheme.** The scheme-less form every Dagger example uses —
+`github.com/wildbitca/…` — makes the resolver try SSH first. On a developer machine that
+works, because an ssh-agent happens to be there. On a runner it fails with
+`failed to determine Git URL protocol`, an error that says nothing about credentials and
+therefore does not point at its own cause.
+
+The repository is **private**, so resolving the dependency needs git credentials. Dagger
+does **not** read the host's `insteadOf` rewrites for module sources — measured
+2026-09-05 with SSH disabled: `git ls-remote` succeeded against the private repo with an
+`insteadOf` in place and `dagger install` on the same shell still failed.
+`DAGGER_GIT_AUTH_TOKEN` did not authenticate either. What works is the credential helper,
+fed with the `wildbit-ci-cd` App token the pipelines already mint:
 
 ```sh
-git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+printf 'https://x-access-token:%s@github.com\n' "$TOKEN" > "$HOME/.git-credentials"
+chmod 600 "$HOME/.git-credentials"
+git config --global credential.helper store
 ```
 
 ## Versioning
