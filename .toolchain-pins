@@ -1,0 +1,48 @@
+# The versions this repository's modules pin, and the one place that asserts them.
+#
+# ── WHY THIS FILE IS HERE AND NOT IN THE CONSUMERS ──────────────────────────
+# Named as a debt by `repo-ops` on 2026-09-05, and it is the right diagnosis:
+# the consumer-side chain (`daggerverse_scan=0.1.0` + its resolved commit,
+# asserted against `dagger.json`) enforces DELIBERATENESS, not VALUE. It
+# guarantees the gitleaks version cannot change without a number moving in
+# somebody's diff. It does not guarantee the number is the one ADR-0003 §2.2
+# pins.
+#
+# Bump `GITLEAKS_IMG` here, cut `scan/v0.2.0`, and every consumer that moves its
+# tag and commit pins together goes green on a gitleaks the ADR never approved.
+# The ADR would say v8.21.2 while eight pipelines ran something else, and every
+# gate would be green while saying so.
+#
+# A consumer CANNOT close this: `scan`'s source is a remote dependency it never
+# sees on disk. Only this repo can compare the constant against a declared
+# number, and doing it here closes it for all eight consumers at once.
+#
+# ── WHAT IT IS AND IS NOT ───────────────────────────────────────────────────
+# Not a regression from the old per-repo scheme: `.toolchain-pins` has never
+# been a value check anywhere in this organisation, it has always been a
+# CONSISTENCY check — "this number appears in one declared place and moves on
+# purpose". What genuinely changed is the ceremony. Moving gitleaks used to mean
+# four repos, four literals, four pins files and four visible PRs. It now means
+# one constant and a tag. That is the point of the refactor, and it is exactly
+# why the value needs asserting somewhere.
+#
+# Format: key=value, `#` comments, no quotes, no spaces around `=`.
+
+# ── ADR-0003 §2.2: identical in every project, which is what makes the gates
+#    comparable. These two are the reason this file exists.
+gitleaks=8.21.2
+trivy=0.58.0
+
+# ── The Dagger engine every module declares. All six dagger.json must agree:
+#    a consumer resolving two modules built for different engines is a failure
+#    mode with no symptom until something in the API moved between them.
+dagger=0.21.9
+
+# ── Base images. Pinned so a rebuild cannot silently change what the guards run
+#    inside. `alpine:3.24` and `alpine:3.22` differ on purpose: PROBE_IMG lags
+#    because the flag probe installs a pinned CLI into it and 3.24 is not needed
+#    there. If they are ever unified, unify the pins with them.
+node=24.20.0
+curl=8.21.0
+alpine_poll=3.24
+alpine_probe=3.22

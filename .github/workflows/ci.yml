@@ -1,0 +1,97 @@
+# CI for the shared modules — and it runs THEM, on THEMSELVES.
+#
+# This repository had no pipeline at all for its first day, which is a poor look on
+# the repo whose entire subject is guards that report green without running. The
+# gates below are `guards.toolchainPins` and `scan.gitleaks` from this same tree:
+# if a module breaks, its own CI is what notices.
+#
+# Modules are loaded by LOCAL PATH (`-m ./guards`), never by tag. A published tag
+# checking itself would pass while the working tree was broken — the guard would be
+# grading a different commit from the one under review.
+#
+# ⚠️ The job `name: ci` is the context the org's `branch-ci-required` ruleset
+# requires. Renaming it leaves every PR at "Expected" forever, which is the
+# deadlock this organisation hit on 2026-09-03. It is API, not a label.
+name: Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ '*/v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daggerverse-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DAGGER_VERSION: "0.21.9"
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # Full history: gitleaks reads every commit, not just HEAD. Without this the
+      # checkout is shallow and the gate passes without looking at anything — the
+      # exact false green it exists to prevent. `scan.gitleaks` now ASSERTS this
+      # rather than trusting the line above it, so removing it fails loudly.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Dagger
+        run: |
+          curl -fsSL https://dl.dagger.io/dagger/install.sh \
+            | DAGGER_VERSION="${DAGGER_VERSION}" BIN_DIR=/usr/local/bin sudo -E sh
+
+      # The value check the consumers CANNOT do. Their chain asserts that the
+      # dependency version and its resolved commit move together — deliberateness.
+      # Nothing over there can say the constant IS 8.21.2, because `scan`'s source
+      # is a remote dependency they never see on disk. Only this repo can, and
+      # doing it here closes it for all eight consumers at once.
+      - name: Toolchain pins (.toolchain-pins)
+        run: |
+          dagger --progress plain -m ./guards call toolchain-pins \
+            --source=. --pins-file=.toolchain-pins --annotate=true \
+            --checks="$(cat .github/toolchain-checks.json)"
+
+      # Nothing in this repository may carry a credential, and this is what
+      # enforces it. Secret scanning is DISABLED here and cannot be turned on: an
+      # enterprise policy blocks changing it over the API, and because the provider
+      # sends that field in the same PATCH as `visibility`, trying took the
+      # visibility change down with it on 2026-09-05. So this gate is not
+      # defence-in-depth, it is the only depth there is.
+      - name: gitleaks (full history)
+        run: dagger --progress plain -m ./scan call gitleaks --source=.
+
+      # `tsc --noEmit` per module. Dagger does NOT type-check module sources on
+      # load — it transpiles them — so a type error ships and surfaces at call time
+      # as an unreadable runtime failure in whichever consumer hit it first.
+      - name: Typecheck every module
+        run: |
+          set -euo pipefail
+          rc=0
+          for m in slack scan guards github identity testing; do
+            echo "── $m"
+            ( cd "$m" && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
+          done
+          exit $rc
+
+      # Every module must declare the same engine, and `dagger functions` is the
+      # cheapest proof that each one still LOADS. A module that compiles but whose
+      # decorators no longer register lists nothing, and would otherwise be found
+      # by a consumer.
+      - name: Every module loads and exposes functions
+        run: |
+          set -euo pipefail
+          for m in slack scan guards github identity testing; do
+            n="$(dagger -m "./$m" functions 2>/dev/null | grep -cvE '^\s*$|^Name\s' || true)"
+            echo "$m: $n function(s)"
+            [ "${n:-0}" -ge 1 ] || { echo "::error title=Module exposes nothing::$m listed no functions — it compiled but did not register"; exit 1; }
+          done

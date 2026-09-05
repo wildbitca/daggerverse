@@ -1,0 +1,13 @@
+[
+ {"kind":"present","file":"scan/src/index.ts","literal":"ghcr.io/gitleaks/gitleaks:v{gitleaks}","what":"gitleaks {gitleaks} (ADR-0003 2.2)"},
+ {"kind":"present","file":"scan/src/index.ts","literal":"aquasec/trivy:{trivy}","what":"trivy {trivy} (ADR-0003 2.2)"},
+ {"kind":"count","file":"scan/src/index.ts","literal":"gitleaks:v","count":1,"what":"exactly one gitleaks image literal"},
+ {"kind":"present","file":"slack/src/index.ts","literal":"curlimages/curl:{curl}","what":"curl {curl}"},
+ {"kind":"present","file":"slack/src/index.ts","literal":"alpine:{alpine_poll}","what":"alpine {alpine_poll} (poll base)"},
+ {"kind":"count","file":"slack/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"slack engine v{dagger}"},
+ {"kind":"count","file":"scan/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"scan engine v{dagger}"},
+ {"kind":"count","file":"guards/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"guards engine v{dagger}"},
+ {"kind":"count","file":"github/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"github engine v{dagger}"},
+ {"kind":"count","file":"identity/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"identity engine v{dagger}"},
+ {"kind":"count","file":"testing/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"testing engine v{dagger}"}
+]
