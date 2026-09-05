@@ -73,12 +73,25 @@ jobs:
       # `tsc --noEmit` per module. Dagger does NOT type-check module sources on
       # load — it transpiles them — so a type error ships and surfaces at call time
       # as an unreadable runtime failure in whichever consumer hit it first.
+      #
+      # ⚠️ `dagger develop` FIRST, and it is not optional. Each module's `sdk/` is
+      # generated, not committed (`/sdk` is in every module's .gitignore), so on a
+      # fresh checkout `@dagger.io/dagger` does not exist and every file fails with
+      # TS2307 — plus a tail of cascading TS7006s that look like real type errors
+      # and are not. This step failed exactly that way on its first run
+      # (33986996074) because it was written on a machine where `sdk/` happened to
+      # be lying around from earlier `dagger develop` runs.
+      #
+      # Reproduce before editing this step: `git clone` to a fresh directory and
+      # run it there. A local pass proves nothing here — the thing that makes it
+      # pass locally is the thing CI does not have.
       - name: Typecheck every module
         run: |
           set -euo pipefail
           rc=0
           for m in slack scan guards github identity testing; do
             echo "── $m"
+            dagger develop -m "./$m" >/dev/null
             ( cd "$m" && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
           done
           exit $rc
