@@ -121,6 +121,27 @@ commit.
   traps are invisible. There is no module-independent probe that sidesteps this: `dagger
   core` does not accept `-m`, so it never loads the module's schema at all.
 
+- **An absent env var becomes a PRESENT, EMPTY `Secret`.** `--flag=env:UNSET` resolves
+  without error, so a module cannot tell "the caller had no token" from "the caller had an
+  empty one" — it takes its token-present branch and fails closed on exactly the run that
+  was meant to skip. Measured 2026-09-05 on `guards.sharedPins`: a skipped token mint plus
+  an unconditional flag turned every Dependabot run red, at a line that looked handled.
+
+  The flag must be **omitted**, not emptied:
+
+  ```bash
+  SIBLINGS=()
+  if [ -n "${SIBLINGS_TOKEN:-}" ]; then SIBLINGS=(--siblings-token=env:SIBLINGS_TOKEN); fi
+  dagger … "${SIBLINGS[@]}" …
+  ```
+
+  The `if` block and not `[ -n … ] && SIBLINGS=(…)`: the `&&` form returns 1 when the test
+  is false and fails the step under GitHub Actions' default `bash -e`. That is a second
+  trap inside the fix for the first.
+
+  Module side: an optional `Secret` that arrives empty should be treated as absent, so the
+  two sides of this cannot disagree.
+
 - **Fail closed with an error that names the parameter.** A silent default on a malformed
   argument renders an empty card and reports nothing wrong, which is the failure these
   modules exist to prevent.
