@@ -205,6 +205,25 @@ function shape(v: string): string {
   return `${n} chars${p ? `, prefix '${p}'` : ", no recognised prefix"}, ${dots} dots`
 }
 
+/**
+ * `Buffer` exists at runtime — the TypeScript SDK's runtime is Node — but nothing
+ * in this module's tsconfig declares it. There is no `lib` setting, so `target:
+ * ES2022` supplies no DOM either, which rules out `atob` for the same reason.
+ *
+ * Declared here rather than pulling in `@types/node`, so this module stays
+ * dependency-free like the other five, and so the assumption is written down at
+ * the one place that makes it: `identity` is the ONLY module in this repository
+ * that touches a Node global.
+ *
+ * Found by this repo's own CI (run 33987124905), not locally. It typechecked on
+ * every developer machine because `@types/node` was lying around from some other
+ * install — a local pass resting on exactly what a fresh checkout lacks, which is
+ * the third time in one day that shape has bitten this project.
+ */
+declare const Buffer: {
+  from(input: string, encoding: string): { toString(encoding: string): string }
+}
+
 /** base64url → utf-8, tolerant of missing padding (JWT segments never carry it). */
 function b64urlDecode(seg: string): string {
   const b64 = seg.replace(/-/g, "+").replace(/_/g, "/")
