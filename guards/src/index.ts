@@ -92,9 +92,23 @@ class Report {
 
   constructor(private readonly name: string, private readonly annotate: boolean) {}
 
+  private verdicts = 0
+
   head(msg: string): void { this.lines.push(msg) }
-  ok(msg: string): void { this.lines.push(`  OK   ${msg}`) }
+  ok(msg: string): void { this.verdicts++; this.lines.push(`  OK   ${msg}`) }
   note(msg: string): void { this.lines.push(`  ..   ${msg}`) }
+
+  /**
+   * Something was NOT checked, and the line has to say so.
+   *
+   * It is not a verdict, so it does not satisfy the backstop in `finish`, and
+   * the wording is chosen for where it is actually read: a folded log or a
+   * Slack checklist, at a glance, by someone scanning for the absence of red.
+   * `OK   0 pairing(s) satisfied` passes that scan while being false — a
+   * sentence about the members of an empty set is vacuously true and reads as
+   * an assurance. `SKIP … NOTHING WAS CHECKED` cannot be misread that way.
+   */
+  skip(msg: string): void { this.lines.push(`  SKIP ${msg}`) }
 
   /**
    * A failure. Also emits a GitHub annotation when asked, because a job's logs
@@ -119,6 +133,16 @@ class Report {
   finish(hint: string): string {
     const out = this.lines.join("\n")
     console.log(out)
+    // ── THE BACKSTOP ────────────────────────────────────────────────────
+    // Reaching the end having reported neither a pass nor a failure means the
+    // guard looked at nothing, and returning here would report that as
+    // success. Every function above is written so this cannot happen — but
+    // that was also true of the pairings tick until somebody read it. This is
+    // the structural version of that fix rather than the enumerated one, so a
+    // function added later cannot reintroduce the shape by omission.
+    if (this.verdicts === 0 && !this.failed) {
+      throw new Error(`${this.name}: finished without checking anything — no pass and no failure was recorded, so this run proves nothing. That is a bug in the guard, not a green build.\n${out}`)
+    }
     if (this.failed) {
       throw new Error(`${this.name}: ${this.failures.length} failure(s)\n${out}\n\n${hint}`)
     }
@@ -583,9 +607,11 @@ export class Guards {
    * @param modulePath    the Dagger module to probe, relative to `source`
    * @param pairings      JSON array of CONDITIONAL rules — see `pairings` below.
    *                      "" means this repo declares none.
-   * @param daggerVersion the CLI to install in the probe container. It must be the
-   *                      engine version this repo pins, or the probe measures a
-   *                      different CLI than the run uses.
+   * @param daggerVersion the CLI to install in the probe container. LEAVE IT EMPTY:
+   *                      it is then read from the module's own `dagger.json`
+   *                      `engineVersion`, which is the version this module is
+   *                      actually run with. Pass one only to deliberately probe
+   *                      with a different CLI than the pipeline uses.
    * @param token         a token that can read the private `daggerverse` repo. The
    *                      nested probe session has no git credentials of its own —
    *                      without this, a consumer with a private dependency never
@@ -606,8 +632,8 @@ export class Guards {
     workflowPath = ".github/workflows/pipeline.yml",
     modulePath = ".github/dagger",
     pairings = "",
-    daggerVersion = "0.21.9",
-    token: Secret | undefined = undefined,
+    daggerVersion = "",
+    token?: Secret,
     timeoutSeconds = 300,
     annotate = false,
   ): Promise<string> {
@@ -632,7 +658,8 @@ export class Guards {
       throw new Error(`guards: found no 'dagger … call <fn> --flag' invocation in ${workflowPath}. Either the workflow no longer calls Dagger, or this scanner stopped recognising the shape — and a guard that checks nothing must not report green.`)
     }
 
-    const base = this.probeBase(source, modulePath, daggerVersion, token)
+    const cli = daggerVersion || await engineVersionOf(source, modulePath)
+    const base = this.probeBase(source, modulePath, cli, token)
     const cache = new Map<string, FlagVerdict | null>()
     let broken = 0
 
@@ -682,7 +709,25 @@ export class Guards {
     for (const p of problems) {
       r.bad(`${p.rule} — ${p.where}: ${p.why}`, "Broken flag pairing")
     }
-    if (problems.length === 0) r.ok(`${seen} pairing(s) satisfied`)
+    // Two ways to print a tick over an empty set, and both used to. `pairings`
+    // is genuinely optional in a way `checks` is not — the flag-existence half
+    // above is this guard's actual job, and pacha-site and pacha-api really do
+    // have no conditional couplings — so an empty list is reported as SKIPPED
+    // rather than refused. What it must never do is claim the rules passed.
+    //
+    // The second case is subtler and was not reported: rules GIVEN but none
+    // applicable, because the flag a rule keys on is absent from the workflow.
+    // That is by design ("if X disappears the rule stops applying by itself"),
+    // so it is not a failure either — but `0 pairing(s) satisfied` is the same
+    // false sentence, and it is the one that would appear the day somebody
+    // renames the flag a rule watches.
+    if (rules.length === 0) {
+      r.skip("no pairing rules were given — NOTHING WAS CHECKED in this direction. This is fine for a repo with no conditional couplings; pass --pairings if it has any.")
+    } else if (seen === 0) {
+      r.skip(`${rules.length} pairing rule(s) were given and NONE APPLIED — no call in this workflow passes the flags they key on, so NOTHING WAS CHECKED in this direction. Fine if those flags are genuinely gone; a defect if one was renamed.`)
+    } else if (problems.length === 0) {
+      r.ok(`${seen} pairing(s) satisfied`)
+    }
 
     return r.finish(
       broken > 0
@@ -758,6 +803,9 @@ export class Guards {
     const r = new Report("daggerBash", annotate)
     const markList = parseJson<string[]>(marks, "marks") ?? ["run_device", "boot_emu"]
     const spanList = parseJson<string[]>(span, "span") ?? ["set -uo pipefail", "exit $FAIL"]
+    if (markList.length === 0) {
+      throw new Error("guards: 'marks' is empty — with nothing to identify the embedded script by, this guard selects no literals and checks no bash. Same shape as an empty 'checks': it would report on a set it never populated.")
+    }
     if (spanList.length !== 2) {
       throw new Error(`guards: 'span' must be exactly two marks — the first and last line of the embedded script. Got ${spanList.length}.`)
     }
@@ -1485,6 +1533,45 @@ async function withDeadline<T>(work: Promise<T>, seconds: number, message: strin
  * of this family — whatever it turns out to be named.
  */
 const SHADOWED = /cannot set field of type dagql\.\w+\[\*?[^\]]*?core\.(\w+)\] with dagql\.(\w+)/
+
+/**
+ * The engine version the module under test declares, from its own `dagger.json`.
+ *
+ * ── WHY IT IS DERIVED AND NOT DEFAULTED ─────────────────────────────────────
+ * A probe running a different CLI from the pipeline measures the wrong thing —
+ * `repo-web` was right about that. But the value belongs in neither place it was
+ * proposed. A constant in THIS module is right on the day it is written and
+ * silently wrong after the next engine bump, in every consumer at once, which is
+ * the floating-pin-dressed-as-a-pin shape `toolchainPins` exists to kill. A
+ * constant in each CONSUMER is one more copy of a number that already exists two
+ * lines away.
+ *
+ * It already lives in `<modulePath>/dagger.json` as `engineVersion` — the version
+ * this very module is run with, so it cannot disagree with itself — and
+ * `toolchainPins` ALREADY asserts that literal against `.toolchain-pins`
+ * (`"engineVersion": "v{dagger}"`, a check every consumer carries). So reading it
+ * needs no new pin, no new flag, and no new place to drift.
+ *
+ * Unreadable or absent is a HARD failure: guessing a CLI version would make the
+ * probe measure something nobody asked for.
+ */
+async function engineVersionOf(source: Directory, modulePath: string): Promise<string> {
+  const path = `${modulePath.replace(/\/+$/, "")}/dagger.json`
+  const raw = await readMaybe(source, path)
+  if (raw === null) {
+    throw new Error(`guards: cannot read ${path}, so the probe cannot know which Dagger CLI the module under test is run with. A probe on a different CLI than the pipeline measures the wrong thing. Fix the path, or pass --dagger-version deliberately.`)
+  }
+  let v: unknown
+  try {
+    v = (JSON.parse(raw) as { engineVersion?: unknown }).engineVersion
+  } catch (e) {
+    throw new Error(`guards: ${path} is not valid JSON (${(e as Error).message})`)
+  }
+  if (typeof v !== "string" || !/^v?\d+\.\d+\.\d+/.test(v)) {
+    throw new Error(`guards: ${path} declares no usable 'engineVersion' (got ${JSON.stringify(v)}). The probe will not guess which CLI to install.`)
+  }
+  return v.replace(/^v/, "")
+}
 
 /**
  * The CLI stage that proves the module LOADED and the command line actually got
