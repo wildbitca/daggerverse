@@ -19,11 +19,11 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 | Module | What it owns | Status |
 |---|---|---|
 | `slack/` | Progress card, thread detail, breakdown, trend (Slack is the trend store) | **published** |
-| `identity/` | OIDC→STS for GCP, GitHub App JWT, Secret Manager reads | planned |
-| `guards/` | Toolchain pins, shared pins across repos, Dagger flag probe, embedded-bash syntax | planned |
-| `scan/` | gitleaks and Trivy, with the exact invocations ADR-0003 §2.2 pins | planned |
-| `github/` | check-runs queries, releases, reruns, step summaries, annotations | planned |
-| `testing/` | Native test-report parsers (`flutter test --machine`, `vitest --reporter=json`) | planned |
+| `identity/` | OIDC→STS for GCP, GitHub App JWT, Secret Manager reads | **published** |
+| `guards/` | Toolchain pins, shared pins across repos, Dagger flag probe, embedded-bash syntax | **published** |
+| `scan/` | gitleaks and Trivy, with the exact invocations ADR-0003 §2.2 pins | **published** |
+| `github/` | check-runs queries, releases, reruns, step summaries, annotations | **published** |
+| `testing/` | Native test-report parsers (`flutter test --machine`, `vitest --reporter=json`) | **published** |
 
 ## Consuming a module
 
@@ -31,24 +31,40 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 dagger install https://github.com/wildbitca/daggerverse/slack@slack/v0.1.0
 ```
 
-**Write the `https://` scheme.** The scheme-less form every Dagger example uses —
-`github.com/wildbitca/…` — makes the resolver try SSH first. On a developer machine that
-works, because an ssh-agent happens to be there. On a runner it fails with
-`failed to determine Git URL protocol`, an error that says nothing about credentials and
-therefore does not point at its own cause.
+**Write the `https://` scheme.** The scheme-less form — `github.com/wildbitca/…` — makes
+the resolver try SSH first. Both forms work now that the repository is public, but the
+explicit one is deterministic: it never probes a transport that may or may not be there.
 
-The repository is **private**, so resolving the dependency needs git credentials. Dagger
-does **not** read the host's `insteadOf` rewrites for module sources — measured
-2026-09-05 with SSH disabled: `git ls-remote` succeeded against the private repo with an
-`insteadOf` in place and `dagger install` on the same shell still failed.
-`DAGGER_GIT_AUTH_TOKEN` did not authenticate either. What works is the credential helper,
-fed with the `wildbit-ci-cd` App token the pipelines already mint:
+**No credentials are needed.** Verified 2026-09-05 with SSH disabled and a scratch `HOME`
+holding nothing but a `.gitconfig`: both forms install and load.
 
-```sh
-printf 'https://x-access-token:%s@github.com\n' "$TOKEN" > "$HOME/.git-credentials"
-chmod 600 "$HOME/.git-credentials"
-git config --global credential.helper store
-```
+This repository was private for its first day, and the two numbers that ended that are
+worth keeping, because they are the argument if anyone proposes going back:
+
+- **The bootstrap cost more than the refactor saved.** Measured on `pacha-api`: writing a
+  token into `.git-credentials` and enabling the credential helper, once per job, was 10
+  of the 10 added steps and 131 of the added lines. Stripped, that workflow is 25 steps —
+  three fewer than the 28 it started from. Across the four consumers it was roughly 20
+  steps and 260 lines of pure ceremony.
+- **It broke two things silently.** The organisation's Dependabot secret store is empty,
+  so every Dependabot PR would have become permanently unmergeable — `ci` is a required
+  status check and the module cannot load without the token. And `guards.daggerFlags`
+  went inert: it probes in a NESTED Dagger session, which does not inherit the host's
+  credential helper, so it died at module load and its classifier read the absence of a
+  known error as success. Measured: an injected flag named `--esto-no-existe-jamas` was
+  reported OK.
+
+What made public safe was checking rather than assuming: zero GCP project ids, zero Slack
+channels, zero approvers, zero service-account emails and zero hostnames appear in the
+module code — the four near-hits are examples inside error strings and a User-Agent. The
+deployment topology lives in the callers, which is where it was designed to live. All six
+commits were scanned with this repo's own `scan.gitleaks` before the flip: no findings.
+
+⚠️ **Secret scanning is `disabled` and cannot be turned on from here.** An enterprise
+policy blocks modifying it over the API — it returns 422 and, because the provider sends
+it in the same PATCH as `visibility`, it takes the visibility change down with it. That is
+why nothing in this repo may carry a credential, and why `scan.gitleaks` is the thing that
+has to catch one.
 
 ## Versioning
 
