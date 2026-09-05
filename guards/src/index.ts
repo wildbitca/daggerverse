@@ -586,6 +586,12 @@ export class Guards {
    * @param daggerVersion the CLI to install in the probe container. It must be the
    *                      engine version this repo pins, or the probe measures a
    *                      different CLI than the run uses.
+   * @param token         a token that can read the private `daggerverse` repo. The
+   *                      nested probe session has no git credentials of its own —
+   *                      without this, a consumer with a private dependency never
+   *                      loads its module and NOTHING is verified. Omit it only for
+   *                      a module with no private dependencies; if one is needed and
+   *                      missing, the guard fails and says so.
    * @param timeoutSeconds deadline for the probe phase. This step carried
    *                      `timeout-minutes: 5` in YAML, and fusing steps into one
    *                      `dagger call` would have deleted it and left only the
@@ -601,6 +607,7 @@ export class Guards {
     modulePath = ".github/dagger",
     pairings = "",
     daggerVersion = "0.21.9",
+    token: Secret | undefined = undefined,
     timeoutSeconds = 300,
     annotate = false,
   ): Promise<string> {
@@ -625,7 +632,7 @@ export class Guards {
       throw new Error(`guards: found no 'dagger … call <fn> --flag' invocation in ${workflowPath}. Either the workflow no longer calls Dagger, or this scanner stopped recognising the shape — and a guard that checks nothing must not report green.`)
     }
 
-    const base = this.probeBase(source, modulePath, daggerVersion)
+    const base = this.probeBase(source, modulePath, daggerVersion, token)
     const cache = new Map<string, FlagVerdict | null>()
     let broken = 0
 
@@ -765,10 +772,25 @@ export class Guards {
 
     // THE SPAN CHECK COMES FIRST and, when it fails, the per-literal bash checks
     // are skipped: with the literal cut in half those verdicts are about the
-    // wrong text — measured here, a stray backtick left `bash -n` reporting a
-    // cheerful OK over 1242 lines that are a fragment of a 1355-line script.
-    // The TypeScript parse still runs, exactly as the original does, because it
-    // is the half that names the offending LINE.
+    // wrong text. The TypeScript parse still runs, exactly as the original does,
+    // because it is the half that names the offending LINE.
+    //
+    // ── AND THE HALF OF THIS THE SPAN CHECK CANNOT DO ──────────────────────
+    // The span check catches an ODD number of stray backticks: the marks end up
+    // in different fragments and no single literal holds both. An EVEN number
+    // does not trip it. A PAIR re-opens the literal further down, one fragment
+    // can still contain both marks, and the span check passes. Measured
+    // 2026-09-05 by inserting one pair into the real file:
+    //
+    //     OK   bash syntax OK (1242 lines)      <- of a 1355-line script
+    //     FAIL … does NOT parse as TypeScript
+    //
+    // `bash -n` silently ate 113 lines and reported success on the remainder,
+    // because a fragment of a correct script is usually still correct bash. Only
+    // the esbuild parse saw it. So the TypeScript half is NOT redundant with the
+    // bash half and must never be dropped as "the compiler already does that":
+    // for an even number of stray backticks it is the ONLY thing that fires, and
+    // a line count in a green tick is not something anyone reads.
     const whole = targets.some((l) => spanList.every((m) => l.includes(m)))
     if (!whole) {
       r.bad(
@@ -879,12 +901,33 @@ export class Guards {
    * The container the flag probes run in: the pinned CLI, the repo mounted, and
    * `experimentalPrivilegedNesting` on every exec so the inner `dagger` talks to
    * the engine that is already running this function.
+   *
+   * ── WHY IT NEEDS A TOKEN ────────────────────────────────────────────────
+   * The nested session has NO git credentials. The helper lives on the host and
+   * only the OUTER CLI session forwards it, so a consumer whose `dagger.json`
+   * names a private `daggerverse` dependency — which is now every one of them —
+   * dies at module load with `failed to load git dep`, long before flag
+   * parsing. See the inertness note on `daggerFlags`.
+   *
+   * The credential helper is a COMMAND that reads the token from the
+   * environment, not a `~/.git-credentials` file and not
+   * `url.…insteadOf` with the token inlined. Both of those write the secret
+   * into a layer that Dagger then caches. What gets written here is the helper
+   * script; the token itself only ever exists as a `withSecretVariable` at exec
+   * time.
    */
-  private probeBase(source: Directory, modulePath: string, daggerVersion: string): Container {
-    return dag.container().from(PROBE_IMG)
+  private probeBase(source: Directory, modulePath: string, daggerVersion: string, token?: Secret): Container {
+    let c = dag.container().from(PROBE_IMG)
       .withExec(["apk", "add", "--no-cache", "curl", "bash", "git"])
       .withEnvVariable("DAGGER_VERSION", daggerVersion)
       .withExec(["sh", "-c", "curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR=/usr/local/bin sh"])
+    if (token) {
+      c = c
+        .withSecretVariable("GH_TOKEN", token)
+        .withExec(["git", "config", "--global", "credential.helper",
+          `!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f`])
+    }
+    return c
       .withMountedDirectory("/w", source)
       .withWorkdir("/w")
       .withEnvVariable("DAGGER_MODULE_PATH", modulePath)
@@ -909,6 +952,47 @@ export class Guards {
       { expect: ReturnType.Any, experimentalPrivilegedNesting: true },
     )
     const out = stripAnsi((await run.stdout()) + (await run.stderr()))
+
+    // ── THE DEFAULT IS FAILURE, AND THIS IS WHY ─────────────────────────
+    // Everything below classifies an ERROR. Until 2026-09-05 anything that
+    // matched no classification was read as "the flag exists" — so a probe that
+    // never ran at all came back green. It did: the nested session has no git
+    // credentials, every consumer now has a private `daggerverse` dependency,
+    // and so EVERY probe died at module load and EVERY flag passed. Measured
+    // against pacha-site's real workflow with a flag that cannot exist:
+    //
+    //     OK   ci: 15 flags        <- it counted `--esto-no-existe-jamas` and passed it
+    //
+    // That is the seventh guard in this project to report green because it
+    // never ran, and the most pointed one, since this guard's own header
+    // explains that this class of trap is invisible to every static check.
+    //
+    // Enumerating the known load failures (`git authentication failed`,
+    // `failed to load git dep`, `resolving module source`) would be the SAME
+    // MISTAKE one level up: a list of the failures somebody has already seen,
+    // silent on the next one. So the test is inverted. A flag is reported OK
+    // only when the output carries POSITIVE EVIDENCE that flag parsing was
+    // actually reached — the CLI's own `parsing command line arguments` stage,
+    // which appears if and only if the module loaded. Absence of a known error
+    // is not evidence of success.
+    //
+    //   module loaded    load workspace DONE / parsing command line arguments
+    //   module did not   load workspace ERROR, and that stage never appears
+    //
+    // If a future Dagger renames that vertex, every probe becomes "no evidence"
+    // and this guard goes loudly red instead of quietly green. That is the
+    // correct direction for the failure to point, and the message below says so.
+    if (!PARSED.test(out)) {
+      const tail = out.trim().split("\n").slice(-6).join("\n")
+      throw new Error(
+        `guards: the flag probe never reached flag parsing, so NOTHING about this workflow's flags was verified. ` +
+        `\`dagger call ${fn} ${flag}\` produced no '${PARSE_STAGE}' stage, which means the module did not load.\n\n` +
+        `The usual cause is a private \`daggerverse\` dependency in the consumer's dagger.json: the nested session has no git ` +
+        `credentials of its own, so pass --token with one that can read the daggerverse repo.\n\n` +
+        `If the module loads fine by hand, the CLI may have renamed that stage; this guard fails rather than assuming success.\n\n` +
+        `Last lines of the probe:\n${tail}`,
+      )
+    }
 
     const unknown = /unknown flag: (--[a-z0-9-]+)/.exec(out)
     if (unknown && unknown[1] === flag) {
@@ -1401,6 +1485,17 @@ async function withDeadline<T>(work: Promise<T>, seconds: number, message: strin
  * of this family — whatever it turns out to be named.
  */
 const SHADOWED = /cannot set field of type dagql\.\w+\[\*?[^\]]*?core\.(\w+)\] with dagql\.(\w+)/
+
+/**
+ * The CLI stage that proves the module LOADED and the command line actually got
+ * parsed. Present if and only if `load workspace` succeeded — measured on
+ * v0.21.9 against both a resolvable module and one whose private git dependency
+ * cannot be fetched. This is the positive evidence `probe()` requires before it
+ * will call any flag OK; see the note there for why it is not a list of known
+ * failures.
+ */
+const PARSE_STAGE = "parsing command line arguments"
+const PARSED = /parsing command line arguments/
 
 const ANSI = /\x1b\[[0-9;]*m/g
 function stripAnsi(s: string): string { return s.replace(ANSI, "") }
