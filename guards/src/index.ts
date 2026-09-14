@@ -1291,11 +1291,53 @@ function scanWorkflow(text: string): ScanRow[] {
   let jobEnv = new Set<string>()
   let stepEnv = new Set<string>()
   let envAt: number | null = null
+  // ⚠️ THE STEP USES THE `dagger/dagger-for-github` ACTION, AND WITHOUT THIS THE GUARD GOES
+  // BLIND. Until 2026-09-14 every invocation lived in a `run:` block as the literal
+  // `dagger … call <fn> --flags`, which is the shape `invocation()` recognises. Moving to
+  // the native action puts the function and its flags in the action's `args:` input, so no
+  // line contains `dagger` or ` call ` any more.
+  //
+  // The existing floor does not catch it: it throws on ZERO invocations, and a workflow
+  // that still has one shell `dagger call` left reports green over that one while saying
+  // nothing about the other ten. Measured on pacha/app the same day — 3 flags checked out
+  // of ~40, `--keystore-base64` among the ones that stopped being verified, and the
+  // pairings reporting "NONE APPLIED". It did not go red; it went quiet.
+  //
+  // Normalised into the old shape rather than duplicating the classifier, so nothing
+  // downstream learns there are two syntaxes.
+  let inDaggerAction = false
+  let daggerVerb = "call"
 
-  for (const chunk of raw.split("\n")) {
+  const lines = raw.split("\n")
+  for (let i = 0; i < lines.length; i++) {
+    const chunk = lines[i]
     const stripped = chunk.trim()
     if (!stripped || stripped.startsWith("#")) continue
     const indent = chunk.length - chunk.replace(/^ +/, "").length
+
+    if (indent <= 6 && stripped.startsWith("- ")) { inDaggerAction = false; daggerVerb = "call" }
+    if (stripped.includes("dagger/dagger-for-github")) {
+      inDaggerAction = true; daggerVerb = "call"
+    } else if (inDaggerAction && stripped.startsWith("verb:")) {
+      daggerVerb = stripped.slice("verb:".length).trim() || "call"
+    } else if (inDaggerAction && stripped.startsWith("args:")) {
+      let value = stripped.slice("args:".length).trim()
+      if (["|", ">", ">-", "|-", ">+", "|+"].includes(value)) {
+        const parts: string[] = []
+        while (i + 1 < lines.length) {
+          const nxt = lines[i + 1]
+          if (!nxt.trim()) { i++; continue }
+          if (nxt.length - nxt.replace(/^ +/, "").length <= indent) break
+          parts.push(nxt.trim()); i++
+        }
+        value = parts.join(" ")
+      }
+      // A verb other than `call` (develop, core…) invokes no module function.
+      if (value && daggerVerb === "call") {
+        rows.push({ job, step, env: new Set([...jobEnv, ...stepEnv]), line: " ".repeat(indent) + "dagger call " + value })
+      }
+      continue
+    }
 
     if (envAt !== null && indent <= envAt) envAt = null
     if (envAt !== null) {
