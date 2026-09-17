@@ -198,3 +198,7 @@ commit.
 
 The full contract, including what deliberately does NOT live here, is in
 [`org-gitops/docs/daggerverse-ci-contract.md`](https://github.com/wildbitca/org-gitops/blob/main/docs/daggerverse-ci-contract.md).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
