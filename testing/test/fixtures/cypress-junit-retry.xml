@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The retry run of the one red Cypress test, as a second `cypress run` writes it. -->
+<testsuites name="Mocha Tests" time="2.301" tests="1" failures="0">
+  <testsuite name="checkout" timestamp="2026-09-17T18:10:00" tests="1" failures="0" time="2.301">
+    <testcase name="checkout applies a discount code" time="2.301" classname="applies a discount code"/>
+  </testsuite>
+</testsuites>

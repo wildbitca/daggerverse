@@ -666,5 +666,139 @@
       "over budget, report-only",
       "`test/core/clock_test.dart:6`"
     ]
+  },
+  {
+    "name": "cypress-junit",
+    "why": "Cypress junit has no file attribute: ids come from a declared property, then a TS-E2E id in the title, and a title-only id is flagged as unanchored instead of passing silently",
+    "fn": "junit-report",
+    "args": {
+      "report": "@cypress-junit.xml",
+      "lane": "e2e",
+      "runner": "cypress",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        3,
+        1,
+        0,
+        0
+      ],
+      ".scenarios | map([.id, .idSource])": [
+        [
+          "checkout-saved-card",
+          "property"
+        ],
+        [
+          "TS-E2E-013",
+          "pattern"
+        ],
+        [
+          "checkout shows the tax breakdown",
+          "name"
+        ],
+        [
+          "checkout applies a discount code",
+          "name"
+        ]
+      ],
+      ".unanchoredScenarios": [
+        "checkout shows the tax breakdown",
+        "checkout applies a discount code"
+      ],
+      ".suites | map([.file, .pass, .fail])": [
+        [
+          "checkout",
+          3,
+          1
+        ]
+      ]
+    }
+  },
+  {
+    "name": "cypress-retry-run",
+    "why": "the retry run of the one red Cypress test",
+    "fn": "junit-report",
+    "args": {
+      "report": "@cypress-junit-retry.xml",
+      "lane": "e2e",
+      "runner": "cypress"
+    },
+    "expect": {
+      ".totals.passed": 1,
+      ".scenarios | map(.id)": [
+        "checkout applies a discount code"
+      ]
+    }
+  },
+  {
+    "name": "cypress-retry",
+    "why": "a title-only id still folds across attempts: the retried test is one flaky scenario, not a pass and a failure",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=cypress-junit",
+        "=cypress-retry-run"
+      ]
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        4,
+        0,
+        0,
+        1
+      ],
+      ".scenarios | map(select(.id == \"checkout applies a discount code\"))[0] | [.status, .attempts]": [
+        "pass",
+        2
+      ],
+      ".unanchoredScenarios | length": 2,
+      ".failures": []
+    }
+  },
+  {
+    "name": "merge-file",
+    "why": "mergeFile takes a path: a real report is past the ~128 kB argv limit",
+    "fn": "merge-file",
+    "args": {
+      "reports": "==merge-lanes"
+    },
+    "expect": {
+      ".lane": "unit+e2e+mutation",
+      ".totals | [.passed, .failed]": [
+        8,
+        2
+      ]
+    }
+  },
+  {
+    "name": "to-metrics-file",
+    "why": "the same for toMetrics",
+    "fn": "to-metrics-file",
+    "args": {
+      "report": "==merge-shards"
+    },
+    "expect": {
+      ". | [.total, .passed, .failed]": [
+        5,
+        3,
+        2
+      ]
+    }
+  },
+  {
+    "name": "summary-file",
+    "why": "summaryMarkdownFile is the one a workflow calls; unanchored ids get a warning in the summary",
+    "fn": "summary-markdown-file",
+    "args": {
+      "reports": "==cypress-junit"
+    },
+    "raw": true,
+    "contains": [
+      "### 🧪 Tests — e2e (cypress)",
+      "| Scenario | Id from |",
+      "⚠️ title",
+      "scenario id(s) come from the test title only"
+    ]
   }
 ]

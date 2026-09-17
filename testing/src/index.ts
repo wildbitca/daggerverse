@@ -392,11 +392,26 @@ type TestReport = {
   perf?: PerfEntry[]
   /** Present only on a merge of DIFFERENT lanes: each lane's own summary. */
   lanes?: LaneSummary[]
+  /** Scenario ids that are only a test title (`idSource: "name"`): a rename drops their coverage row. */
+  unanchoredScenarios?: string[]
 }
 
+/**
+ * `idSource` says WHERE the id came from, and it is the difference between a
+ * coverage row that survives an edit and one that silently disappears:
+ *
+ *   · `property` a `<property name="scenarioId">` in the JUnit — declared, stable
+ *   · `file`     the flow/spec FILE's basename — stable while the file is not moved
+ *   · `pattern`  a declared id inside the test title (`TS-E2E-012 …`) — stable
+ *     while the id stays in the title
+ *   · `name`     nothing to anchor to, so the id IS the test title: renaming the
+ *     title renames the scenario, its `coverage.tsv` row stops matching and the
+ *     feature quietly loses its coverage. These are counted in
+ *     `unanchoredScenarios` and named on the card's thread and the step summary.
+ */
 type Scenario = {
   id: string; name: string; tags: string[]; status: "pass" | "fail" | "skip"
-  durationMs: number; attempts: number; file?: string
+  durationMs: number; attempts: number; file?: string; idSource?: "property" | "file" | "pattern" | "name"
 }
 /**
  * `covered` = at least one unit test or scenario is assigned to the feature.
@@ -601,6 +616,13 @@ function xmlAttrs(tag: string): Record<string, string> {
   return out
 }
 
+/** The value of `<property name="X" value="…"/>` inside a testcase body, or "". */
+function propValue(inner: string, name: string): string {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const m = new RegExp(`<property\\b[^>]*\\bname\\s*=\\s*["']${esc}["'][^>]*>`).exec(inner)
+  return m ? (xmlAttrs(m[0]).value || "").trim() : ""
+}
+
 /**
  * JUnit XML → TestReport. Covers the producers the organisation has:
  *
@@ -617,11 +639,26 @@ function xmlAttrs(tag: string): Record<string, string> {
  * JUnit is flat. Comments are stripped first so a commented-out `<testcase>`
  * cannot count; CDATA is unwrapped.
  *
- * ── SCENARIO ID ─────────────────────────────────────────────────────────────
- * With `runner = "maestro"` the id is the flow FILE's basename without
- * extension (`test/e2e/android/like.yaml` → `like`): that is what
- * `coverage.tsv` rows name, and it does not change when someone edits the
- * flow's display `name:`. Otherwise the id is the test name.
+ * ── SCENARIO ID: STABLE, OR LOUDLY NOT ──────────────────────────────────────
+ * A scenario id is what a `coverage.tsv` row names, so an id that moves when
+ * somebody edits a test title deletes that feature's coverage with nothing
+ * turning red. Resolution order, most stable first:
+ *
+ *   1. `<property name="scenarioId" value="…"/>` inside the testcase
+ *      (`idProperty` names the property; "" disables this step).
+ *   2. the testcase's `file` attribute, basename without extension — but ONLY
+ *      when that file holds exactly one testcase. A Maestro flow is one file and
+ *      one test; a Cypress spec with twelve tests is not, and collapsing twelve
+ *      scenarios into one id would be worse than a fragile id.
+ *   3. a declared id inside the test title, matched by `idPattern` — by default
+ *      `TS-E2E-012`, `TS-ATS8-020`: capitals and digits ending in a number.
+ *   4. the test title itself. FRAGILE, and said so: these ids are listed in
+ *      `unanchoredScenarios`, counted on the card's thread and in the step
+ *      summary, so a repository sees what a rename would cost before it costs it.
+ *
+ * Cypress (mocha-junit-reporter) emits no `file` attribute, so a Cypress repo
+ * gets stable ids by putting a declared id in each test title, or by configuring
+ * the reporter to write `<property name="scenarioId">`.
  *
  * ── RETRIES ─────────────────────────────────────────────────────────────────
  * A testcase that appears more than once is one test with several attempts,
@@ -629,14 +666,32 @@ function xmlAttrs(tag: string): Record<string, string> {
  * after an earlier failure is flaky. Across separate files `merge` applies the
  * equivalent rule.
  */
-function junitToReport(xml: string, lane: string, runner: string, exitCode: string, asScenarios: boolean): TestReport {
+function junitToReport(xml: string, lane: string, runner: string, exitCode: string, asScenarios: boolean, idProperty: string, idPattern: string): TestReport {
   const r = emptyReport(lane, runner, exitCode)
   const src = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;"))
-  type Case = { key: string; id: string; name: string; file: string; ms: number; status: "pass" | "fail" | "skip"; tags: string[]; kind: "failure" | "error"; message: string; detail: string }
+  type Case = { key: string; id: string; idSource: NonNullable<Scenario["idSource"]>; name: string; file: string; ms: number; status: "pass" | "fail" | "skip"; tags: string[]; kind: "failure" | "error"; message: string; detail: string }
+  let idRe: RegExp | undefined
+  if (idPattern.trim()) {
+    try {
+      idRe = new RegExp(idPattern)
+    } catch (e) {
+      throw new Error(`testing: 'idPattern' is not a valid regular expression (${(e as Error).message})`)
+    }
+  }
   const cases: Case[] = []
   const bodies: { attrs: Record<string, string>; body: string }[] = []
   for (const sm of src.matchAll(/<testsuite\b([^>]*?)(\/>|>([\s\S]*?)<\/testsuite>)/g)) bodies.push({ attrs: xmlAttrs(sm[1]), body: sm[3] ?? "" })
   if (!bodies.length) bodies.push({ attrs: {}, body: src }) // a bare list of <testcase>
+  // A `file` attribute identifies a scenario only when the file holds ONE test —
+  // a Maestro flow, a one-scenario spec. A Cypress spec with twelve tests would
+  // otherwise collapse all twelve into one id.
+  const perFile = new Map<string, number>()
+  for (const { body } of bodies) {
+    for (const cm of body.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
+      const f = xmlAttrs(cm[1]).file
+      if (f) perFile.set(f, (perFile.get(f) ?? 0) + 1)
+    }
+  }
   let suiteTime = 0
   for (const { attrs: sa, body } of bodies) {
     suiteTime += Math.round((Number(sa.time) || 0) * 1000)
@@ -644,7 +699,10 @@ function junitToReport(xml: string, lane: string, runner: string, exitCode: stri
       const a = xmlAttrs(cm[1])
       const inner = cm[3] ?? ""
       const name = a.name || a.id || "?"
-      const file = a.file || sa.file || a.classname || sa.name || "?"
+      // `classname` LAST: vitest and Maestro make it the file, but mocha/Cypress
+      // make it the test title, and a title as a "file" would put one suite row
+      // per test and send the feature mapper looking for a path that is a sentence.
+      const file = a.file || sa.file || sa.name || a.classname || "?"
       const fail = /<(failure|error)\b([^>]*?)(\/>|>([\s\S]*?)<\/\1>)/.exec(inner)
       const st = (a.status || "").toUpperCase()
       let status: Case["status"] = "pass"
@@ -654,9 +712,16 @@ function junitToReport(xml: string, lane: string, runner: string, exitCode: stri
       const tags = tagProp ? (xmlAttrs(tagProp[0]).value || "").split(",").map((t) => t.trim()).filter(Boolean) : []
       const fa = fail ? xmlAttrs(fail[2]) : {}
       const text = fail ? xmlDecode((fail[4] ?? "").trim()) : ""
-      const id = runner === "maestro" && a.file ? a.file.replace(/^.*\//, "").replace(/\.[^.]+$/, "") : name
+      // Id resolution, most stable first. See `Scenario.idSource`.
+      const declared = idProperty.trim() ? propValue(inner, idProperty.trim()) : ""
+      const byPattern = idRe ? (idRe.exec(name)?.[1] ?? idRe.exec(name)?.[0] ?? "") : ""
+      let id = name
+      let idSource: Case["idSource"] = "name"
+      if (declared) { id = declared; idSource = "property" }
+      else if (a.file && perFile.get(a.file) === 1) { id = a.file.replace(/^.*\//, "").replace(/\.[^.]+$/, ""); idSource = "file" }
+      else if (byPattern) { id = byPattern; idSource = "pattern" }
       cases.push({
-        key: runner === "maestro" ? id : `${file}${SEP}${name}`, id, name, file,
+        key: idSource === "name" ? `${file}${SEP}${name}` : id, id, idSource, name, file,
         ms: Math.round((Number(a.time) || 0) * 1000), status, tags,
         kind: fail?.[1] === "error" ? "error" : "failure",
         message: (fa.message || text.split("\n")[0] || (status === "fail" ? `status ${st || "failed"}` : "")).trim(),
@@ -688,13 +753,17 @@ function junitToReport(xml: string, lane: string, runner: string, exitCode: stri
     agg.set(c.file, s)
     // `sawFail` with a final pass is only expressible through `attempts` here;
     // `merge` reads "pass with attempts > 1" as flaky, which is the same fact.
-    if (asScenarios) scenarios.push({ id: c.id, name: c.name, tags: c.tags, status: c.status, durationMs: c.ms, attempts: c.status === "pass" && !sawFail ? 1 : attempts, file: c.file })
+    if (asScenarios) scenarios.push({ id: c.id, name: c.name, tags: c.tags, status: c.status, durationMs: c.ms, attempts: c.status === "pass" && !sawFail ? 1 : attempts, file: c.file, idSource: c.idSource })
   }
   r.suites = [...agg.entries()].map(([file, v]) => ({ file, ...v }))
   r.totals.durationMs = suiteTime || r.suites.reduce((x, s) => x + s.durationMs, 0)
   r.slowest = topSlowest(slow)
   if (flaky.length) r.flakyTests = flaky
-  if (asScenarios) r.scenarios = scenarios
+  if (asScenarios) {
+    r.scenarios = scenarios
+    const loose = scenarios.filter((x) => x.idSource === "name").map((x) => x.id)
+    if (loose.length) r.unanchoredScenarios = loose
+  }
   return foldReportExit(r)
 }
 
@@ -918,6 +987,8 @@ function mergeReports(rs: TestReport[]): TestReport {
   }
   if (scen.size) {
     out.scenarios = [...scen.values()]
+    const loose = out.scenarios.filter((x) => x.idSource === "name").map((x) => x.id)
+    if (loose.length) out.unanchoredScenarios = loose
     const passed = new Set<string>()
     for (const s of out.scenarios) {
       if (s.status === "pass") {
@@ -1186,9 +1257,12 @@ function reportMarkdown(rs: TestReport[]): string {
       out.push("", "</details>", "")
     }
     if (r.scenarios?.length) {
-      out.push("<details><summary>🎬 Scenarios</summary>", "", "| Scenario | Status | Attempts | Time | Tags |", "|---|---|---:|---:|---|")
-      for (const s of r.scenarios) out.push(`| ${mdCell(s.id)} | ${s.status === "pass" ? (s.attempts > 1 ? "✅ flaky" : "✅") : s.status === "fail" ? "❌" : "skipped"} | ${s.attempts} | ${fmtMs(s.durationMs)} | ${mdCell(s.tags.join(", "))} |`)
+      out.push("<details><summary>🎬 Scenarios</summary>", "", "| Scenario | Id from | Status | Attempts | Time | Tags |", "|---|---|---|---:|---:|---|")
+      for (const s of r.scenarios) out.push(`| ${mdCell(s.id)} | ${s.idSource === "name" ? "⚠️ title" : s.idSource ?? "—"} | ${s.status === "pass" ? (s.attempts > 1 ? "✅ flaky" : "✅") : s.status === "fail" ? "❌" : "skipped"} | ${s.attempts} | ${fmtMs(s.durationMs)} | ${mdCell(s.tags.join(", "))} |`)
       out.push("", "</details>", "")
+      if (r.unanchoredScenarios?.length) {
+        out.push(`⚠️ **${r.unanchoredScenarios.length} scenario id(s) come from the test title only** — renaming the title renames the scenario and its \`coverage.tsv\` row stops matching, so the feature loses its coverage with nothing turning red. Give each a \`<property name="scenarioId">\`, a one-test spec file, or a declared id in the title: ${r.unanchoredScenarios.slice(0, 20).map((x) => `\`${mdCell(x)}\``).join(", ")}${r.unanchoredScenarios.length > 20 ? ` …(+${r.unanchoredScenarios.length - 20})` : ""}`, "")
+      }
     }
     if (r.features?.length) {
       const cov = r.features.filter((f) => f.covered).length
@@ -1352,14 +1426,20 @@ export class Testing {
    *                    a flow fails and also when it never reached a device.
    */
   @func()
-  junitReport(report: string, lane: string, runner = "junit", exitCode = "0", asScenarios = true): string {
-    return JSON.stringify(junitToReport(report, requiredLane(lane), runner, exitCode, asScenarios))
+  junitReport(
+    report: string, lane: string, runner = "junit", exitCode = "0", asScenarios = true,
+    idProperty = "scenarioId", idPattern = "([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\\d+)",
+  ): string {
+    return JSON.stringify(junitToReport(report, requiredLane(lane), runner, exitCode, asScenarios, idProperty, idPattern))
   }
 
   /** `junitReport`, reading the report from a `File`. A missing file is an empty report, folded by `exitCode`. */
   @func()
-  async junitReportFile(report: File, lane: string, runner = "junit", exitCode = "0", asScenarios = true): Promise<string> {
-    return this.junitReport(await report.contents().catch(() => ""), lane, runner, exitCode, asScenarios)
+  async junitReportFile(
+    report: File, lane: string, runner = "junit", exitCode = "0", asScenarios = true,
+    idProperty = "scenarioId", idPattern = "([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\\d+)",
+  ): Promise<string> {
+    return this.junitReport(await report.contents().catch(() => ""), lane, runner, exitCode, asScenarios, idProperty, idPattern)
   }
 
   /**
@@ -1434,6 +1514,20 @@ export class Testing {
   }
 
   /**
+   * `merge`, reading the reports from a `File` holding the JSON array.
+   *
+   * ⚠️ USE THIS ONE FROM A WORKFLOW. A report of a real suite is hundreds of
+   * kilobytes (measured: 195 kB for one Angular repo) and `--reports="$(cat …)"`
+   * dies at the ~128 kB argv limit with an `Argument list too long` that names
+   * nothing. Every function here that takes report JSON has a `*File` twin for
+   * that reason.
+   */
+  @func()
+  async mergeFile(reports: File): Promise<string> {
+    return this.merge(await reports.contents())
+  }
+
+  /**
    * Merge reports — shards of one lane, or several lanes — into one.
    * The rules (scenario retries, coverage weighting, lanes) are documented on
    * `mergeReports`; the short version: same lane sums, different lanes are
@@ -1476,6 +1570,12 @@ export class Testing {
     return this.featureMap(report, JSON.stringify(ids.sort()), text, strict)
   }
 
+  /** `features`, reading the report from a `File` — see `mergeFile` for why. */
+  @func()
+  async featuresFile(report: File, specsDir: Directory, map?: File, strict = false): Promise<string> {
+    return await this.features(await report.contents(), specsDir, map, strict)
+  }
+
   /**
    * `features` without the filesystem: the feature ids and the map text given
    * directly. Pure, so the mapping is testable on fixtures.
@@ -1506,6 +1606,18 @@ export class Testing {
     return JSON.stringify(reportToMetrics(r))
   }
 
+  /** `toMetrics`, reading the report from a `File` — see `mergeFile` for why. */
+  @func()
+  async toMetricsFile(report: File): Promise<string> {
+    return this.toMetrics(await report.contents())
+  }
+
+  /** `withPerf`, reading the report from a `File` — see `mergeFile` for why. */
+  @func()
+  async withPerfFile(report: File, perf: string): Promise<string> {
+    return this.withPerf(await report.contents(), perf)
+  }
+
   /**
    * Markdown for `$GITHUB_STEP_SUMMARY`: totals, lanes, failures, flaky, the 10
    * slowest, suites, scenarios, the feature matrix, coverage, mutation and perf.
@@ -1516,5 +1628,18 @@ export class Testing {
   @func()
   summaryMarkdown(reports: string): string {
     return reportMarkdown(parseReports(reports, "reports"))
+  }
+
+  /**
+   * `summaryMarkdown`, reading the reports from a `File`.
+   *
+   * ⚠️ THE ONE TO CALL FROM A WORKFLOW. `--reports="$(cat report.json)"` breaks
+   * at the ~128 kB argv limit, and a real report passes it easily — which is how
+   * a consumer ended up vendoring its own summary renderer, the duplication these
+   * modules exist to remove.
+   */
+  @func()
+  async summaryMarkdownFile(reports: File): Promise<string> {
+    return this.summaryMarkdown(await reports.contents())
   }
 }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Cypress via mocha-junit-reporter: no `file` attribute, several tests per spec,
+     `classname` is the test title and `name` the full title. Hand-written to the
+     shape mocha-junit-reporter documents; the ids are what this parser must derive. -->
+<testsuites name="Mocha Tests" time="18.402" tests="4" failures="1">
+  <testsuite name="Root Suite" timestamp="2026-09-17T18:00:00" tests="0" file="cypress/e2e/checkout.cy.ts" time="0" failures="0">
+  </testsuite>
+  <testsuite name="checkout" timestamp="2026-09-17T18:00:01" tests="4" failures="1" time="18.402">
+    <testcase name="checkout TS-E2E-012 pays with a saved card" time="6.210" classname="TS-E2E-012 pays with a saved card">
+      <properties>
+        <property name="scenarioId" value="checkout-saved-card"/>
+      </properties>
+    </testcase>
+    <testcase name="checkout TS-E2E-013 rejects an expired card" time="4.980" classname="TS-E2E-013 rejects an expired card"/>
+    <testcase name="checkout shows the tax breakdown" time="5.102" classname="shows the tax breakdown"/>
+    <testcase name="checkout applies a discount code" time="2.110" classname="applies a discount code">
+      <failure message="Timed out retrying after 4000ms: Expected to find element: #discount" type="AssertionError">AssertionError: Timed out retrying after 4000ms
+    at Context.eval (webpack://app/./cypress/e2e/checkout.cy.ts:41:7)</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

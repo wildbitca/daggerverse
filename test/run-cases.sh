@@ -3,7 +3,9 @@
 #
 # Argument values:
 #   "@a+b"          contents of fixtures/a followed by fixtures/b (the files are concatenated)
+#   "@@a"           the PATH of fixtures/a, for a File argument
 #   "=case"         the output of an earlier case; "=case.path" a jq path inside it
+#   "==case"        the PATH of an earlier case's output, for a File argument
 #   ["=a", "=b"]    a JSON array of earlier outputs
 #   "dir:path"      a directory under fixtures, passed as a Directory
 #   anything else   passed as given
@@ -36,6 +38,8 @@ resolve() { # $1 = JSON value of one argument; prints the string to pass
   fi
   s="$(jq -r . <<<"$v")"
   case "$s" in
+    @@*) printf '%s' "$fx/${s#@@}" ;;
+    ==*) printf '%s' "$out/${s#==}.json" ;;
     @*)
       local f
       IFS='+' read -ra files <<<"${s#@}"
