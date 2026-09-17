@@ -22,6 +22,10 @@
  * Duplication therefore drops from 363 lines to ~40, not to zero. Claiming zero
  * would be claiming something this interface cannot deliver.
  *
+ * The one loop that turned out to be the same everywhere — a watcher that keeps
+ * one card per multi-job workflow run — lives in the `runcard` module, which
+ * depends on this one. This module stays a client.
+ *
  * ── WHAT IS DELIBERATELY NOT PORTED ─────────────────────────────────────────
  * `approveProd` — the production approval gate that used to poll Slack from
  * inside Dagger. It was retired on 2026-08-22 (ADR-0003 §2.3) and replaced by a
@@ -32,7 +36,7 @@
  *
  * Porting it here would take that retired second path to production and make it
  * freshly callable by four repos at once — which is exactly the debt ADR-0003
- * §7.1 named and the 2026-08-22 migration closed. UN SOLO CAMINO A PRODUCCIÓN.
+ * §7.1 named and the 2026-08-22 migration closed. ONE PATH TO PRODUCTION.
  *
  * ── COMPLEX ARGUMENTS TRAVEL AS JSON STRINGS ────────────────────────────────
  * Dagger's TypeScript SDK exposes structural types poorly across a module
@@ -48,15 +52,19 @@ const POLL_IMG = "alpine:3.24" // curl+jq (via apk) to read history/replies from
 
 type ItemState = "pending" | "running" | "ok" | "fail" | "skip"
 const EMOJI: Record<ItemState, string> = { pending: "⏳", running: "🔄", ok: "✅", fail: "❌", skip: "⏭️" }
-const COLOR = { running: "#dbab09", ok: "#2eb67d", fail: "#e01e5a" } as const
+const COLOR = { running: "#dbab09", waiting: "#1d9bd1", ok: "#2eb67d", fail: "#e01e5a" } as const
 
 /** One checklist row. `ms` measured duration, `note` the per-item detail line. */
 type Item = { name: string; st: ItemState; ms?: number; t0?: number; note?: string }
 
-/** Build context. `server` is the GitHub server URL, `msg` the commit message. */
+/**
+ * Build context. `server` is the GitHub server URL, `msg` the commit message.
+ * `runAttempt` is optional for callers written against v0.1.0; without it the
+ * card's metadata cannot tell a re-run's card from the first attempt's.
+ */
 type Meta = {
   repo: string; ref: string; sha: string; actor: string; event: string
-  runId: string; runNumber: string; server: string; msg: string
+  runId: string; runNumber: string; server: string; msg: string; runAttempt?: string
 }
 
 /** Test totals, from each runner's NATIVE reporter — never parsed from human output. */
@@ -66,8 +74,22 @@ type TestMetrics = {
 }
 
 type Trend = { total_ms: number; scenarios: number; passed: number; failed: number; gates_ok: number; gates_total: number }
-type EventPayload = { repo: string; sha: string; run_id: string; total_ms: number; scenarios: number; passed: number; failed: number; gates_ok: number; gates_total: number }
-type Status = "running" | "ok" | "fail"
+/**
+ * The card's `metadata.event_payload`. It is read by three parties, so it is API:
+ *   · `readTrend` on the next run (`repo`, the numbers),
+ *   · `findCard` / `runcard.thread` to locate a run's card (`run_id`, `run_attempt`),
+ *   · the `deploy-gate` service, which threads its approval request under the
+ *     newest top-level message whose `sha` matches the deployment's commit.
+ * Renaming or dropping any of these fields breaks one of them silently.
+ */
+type EventPayload = { repo: string; sha: string; run_id: string; run_attempt: string; status: string; total_ms: number; scenarios: number; passed: number; failed: number; gates_ok: number; gates_total: number }
+/**
+ * `waiting` is a run parked on a human (an environment approval): nothing has
+ * failed, nothing is running, and the watcher has left. Rendering that as
+ * `running` leaves a spinner that never stops; as `ok` it claims a deploy that
+ * has not happened.
+ */
+type Status = "running" | "waiting" | "ok" | "fail"
 
 function fmt(ms?: number): string {
   if (ms === undefined) return ""
@@ -84,7 +106,7 @@ function statsLine(items: Item[], m: TestMetrics | undefined, trend: Trend | und
   const parts = [`⏱️ ${fmt(elapsedMs)}`]
   if (trend) {
     const d = elapsedMs - trend.total_ms
-    parts.push(`${d === 0 ? "±" : d < 0 ? "↓" : "↑"}${fmt(Math.abs(d))} vs anterior`)
+    parts.push(`${d === 0 ? "±" : d < 0 ? "↓" : "↑"}${fmt(Math.abs(d))} vs previous`)
     if (m) { const ds = m.total - trend.scenarios; if (ds !== 0) parts.push(`${ds > 0 ? "+" : ""}${ds} scen`) }
   }
   parts.push(`🚦 ${gatesOk}/${gatesTotal} gates`)
@@ -111,8 +133,8 @@ function parse<T>(raw: string, what: string): T | undefined {
 }
 
 function asStatus(s: string): Status {
-  if (s === "running" || s === "ok" || s === "fail") return s
-  throw new Error(`slack: status '${s}' is not one of running|ok|fail`)
+  if (s === "running" || s === "waiting" || s === "ok" || s === "fail") return s
+  throw new Error(`slack: status '${s}' is not one of running|waiting|ok|fail`)
 }
 
 @object()
@@ -130,7 +152,7 @@ export class Slack {
    * @param body JSON of the Slack message body — what `render` returns.
    * @param ts   message to edit; empty posts a new one.
    */
-  @func()
+  @func({ cache: "never" })
   async post(token: Secret, channel: string, body: string, ts = ""): Promise<string> {
     const parsed = parse<Record<string, unknown>>(body, "body")
     if (!parsed) return ts
@@ -161,7 +183,7 @@ export class Slack {
    * what `readTrend` reads on the NEXT run: Slack itself is the trend store, so
    * there is no database to run.
    *
-   * @param status    running | ok | fail
+   * @param status    running | waiting | ok | fail
    * @param meta      JSON Meta
    * @param items     JSON Item[]
    * @param metrics   JSON TestMetrics, or "" when the suite has not reported yet
@@ -192,13 +214,13 @@ export class Slack {
       throw new Error(`slack: eventType '${eventType}' must match ^[a-z0-9_]+$ — Slack drops metadata that does not, and the trend then goes silently missing`)
     }
     const payload: EventPayload = {
-      repo: m.repo, sha: m.sha ?? "", run_id: m.runId ?? "",
+      repo: m.repo, sha: m.sha ?? "", run_id: m.runId ?? "", run_attempt: m.runAttempt ?? "", status: st,
       total_ms: elapsedMs,
       scenarios: tm?.total ?? 0, passed: tm?.passed ?? 0, failed: tm?.failed ?? 0,
       gates_ok: its.filter((i) => i.st === "ok").length, gates_total: its.length,
     }
-    const label = st === "ok" ? "OK" : st === "fail" ? "FALLÓ" : "en curso"
-    const emoji = st === "ok" ? "🟢" : st === "fail" ? "🔴" : "🔄"
+    const label = st === "ok" ? "OK" : st === "fail" ? "FAILED" : st === "waiting" ? "awaiting approval" : "running"
+    const emoji = st === "ok" ? "🟢" : st === "fail" ? "🔴" : st === "waiting" ? "⏸️" : "🔄"
     const checklist = its
       .map((i) => `${EMOJI[i.st]} ${i.name}${i.ms !== undefined ? `  ·  ${fmt(i.ms)}` : ""}${i.note ? `  —  ${i.note}` : ""}`)
       .join("\n")
@@ -207,9 +229,9 @@ export class Slack {
     const repoUrl = `${m.server}/${m.repo}`
     const fields = [
       { type: "mrkdwn", text: `*Repo:*\n<${repoUrl}|${m.repo || "?"}>` },
-      { type: "mrkdwn", text: `*Rama:*\n<${repoUrl}/tree/${m.ref}|\`${m.ref || "?"}\`>` },
+      { type: "mrkdwn", text: `*Branch:*\n<${repoUrl}/tree/${m.ref}|\`${m.ref || "?"}\`>` },
       { type: "mrkdwn", text: `*Commit:*\n<${repoUrl}/commit/${m.sha}|\`${short}\`>${subject ? `  ${subject}` : ""}` },
-      { type: "mrkdwn", text: `*Autor:*\n<${m.server}/${m.actor}|${m.actor || "?"}>` },
+      { type: "mrkdwn", text: `*Author:*\n<${m.server}/${m.actor}|${m.actor || "?"}>` },
     ]
     const blocks: unknown[] = [
       { type: "header", text: { type: "plain_text", text: `${emoji} ${title} — ${label}`, emoji: true } },
@@ -219,7 +241,7 @@ export class Slack {
       { type: "context", elements: [{ type: "mrkdwn", text: statsLine(its, tm, tr, elapsedMs) }] },
       {
         type: "context",
-        elements: [{ type: "mrkdwn", text: `Trigger: \`${m.event || "?"}\`${m.runNumber ? `  ·  run #${m.runNumber}` : ""}  ·  <${repoUrl}/actions/runs/${m.runId}|Ver build ↗>` }],
+        elements: [{ type: "mrkdwn", text: `Trigger: \`${m.event || "?"}\`${m.runNumber ? `  ·  run #${m.runNumber}${m.runAttempt && m.runAttempt !== "1" ? ` (attempt ${m.runAttempt})` : ""}` : ""}  ·  <${repoUrl}/actions/runs/${m.runId}|View run ↗>` }],
       },
     ]
     return JSON.stringify({
@@ -235,7 +257,7 @@ export class Slack {
    * Matches on `event_type` AND `repo`: `event_type` alone was not enough once
    * two lanes of the same repo shared a series, and the comparison silently
    * compared a five-emulator e2e against a Simulator build and printed a
-   * perfectly plausible, false "↑12m vs anterior".
+   * perfectly plausible, false "↑12m vs previous".
    *
    * `cacheBust` MUST vary per run (use the run id). Without it Dagger serves the
    * previous exec from cache and every run reads the same stale trend — a network
@@ -244,7 +266,7 @@ export class Slack {
    * Best-effort: returns "" on any failure. No trend is a missing line on a card;
    * a hard failure here would be a pipeline down because a chat app was slow.
    */
-  @func()
+  @func({ cache: "never" })
   async readTrend(token: Secret, channel: string, eventType: string, repo: string, cacheBust: string): Promise<string> {
     const script = `
 curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&include_all_metadata=true" -H "Authorization: Bearer $TOK" \\
@@ -272,6 +294,67 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
   }
 
   /**
+   * Find the `ts` of the card a given run posted, by its metadata. Returns ""
+   * when there is none.
+   *
+   * A card is identified by `event_type` + `run_id` + `run_attempt`, never by
+   * `run_id` alone: a re-run keeps the run id, and matching on it alone threads
+   * attempt 2's detail under attempt 1's card, which already says "FAILED".
+   * An empty `runAttempt` matches any attempt and takes the newest, which is what
+   * a caller that does not know its attempt wants.
+   *
+   * Only TOP-LEVEL messages are searched (`conversations.history`), because that
+   * is where a card lives; replies are not cards. `include_all_metadata=true` is
+   * not optional: without it Slack omits `metadata` and nothing ever matches.
+   *
+   * ⚠️ `channel` must be the channel ID (`C…`), not its name. `chat.postMessage`
+   * accepts a name, `conversations.history` does not, and answers
+   * `channel_not_found`, which this function reports as "no card".
+   *
+   * @param cacheBust MUST change on every call that must see new messages. A
+   *   lookup served from Dagger's cache returns the ts it found last time — or
+   *   the "" it found before the card existed.
+   * @param limit how many recent top-level messages to scan (Slack caps at 999).
+   */
+  @func({ cache: "never" })
+  async findCard(
+    token: Secret, channel: string, eventType: string, runId: string, cacheBust: string,
+    runAttempt = "", limit = 200,
+  ): Promise<string> {
+    if (!channel || !runId) return ""
+    const script = `
+curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=$LIMIT&include_all_metadata=true" -H "Authorization: Bearer $TOK" \\
+ | jq -r --arg et "$EVENT_TYPE" --arg run "$RUN_ID" --arg att "$RUN_ATTEMPT" '
+   if .ok != true then "ERROR:" + (.error // "unknown") else
+   first((.messages // [])[]
+     | select(.metadata.event_type == $et)
+     | select(((.metadata.event_payload.run_id // "") | tostring) == $run)
+     | select($att == "" or (((.metadata.event_payload.run_attempt // "") | tostring) == $att))
+     | .ts) // "" end'
+`
+    try {
+      const out = (await this.pollBase()
+        .withSecretVariable("TOK", token)
+        .withEnvVariable("CHANNEL", channel)
+        .withEnvVariable("LIMIT", String(Math.max(1, Math.min(999, limit))))
+        .withEnvVariable("EVENT_TYPE", eventType)
+        .withEnvVariable("RUN_ID", runId)
+        .withEnvVariable("RUN_ATTEMPT", runAttempt)
+        .withEnvVariable("CACHE_BUST", cacheBust)
+        .withExec(["sh", "-c", script])
+        .stdout()).trim()
+      if (out.startsWith("ERROR:")) {
+        console.error(`slack findCard: conversations.history answered ${out.slice(6)}`)
+        return ""
+      }
+      return out
+    } catch (e) {
+      console.error("findCard failed:", e)
+      return ""
+    }
+  }
+
+  /**
    * The closing detail, in the card's THREAD: duration per step, the test table
    * and the trend. Posted on ok AND on fail — a run that failed is the one whose
    * detail somebody actually needs.
@@ -279,7 +362,7 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
    * In the thread and not as a second channel message: the card is already where
    * this run is being watched, and a loose message forces pairing them by eye.
    */
-  @func()
+  @func({ cache: "never" })
   async breakdown(
     token: Secret,
     channel: string,
@@ -291,28 +374,28 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
     trend = "",
   ): Promise<string> {
     if (!threadTs) return ""
-    const st = status === "ok" ? "ok" : "fail"
+    const st = status === "ok" || status === "waiting" ? status : "fail"
     const its = parse<Item[]>(items, "items") ?? []
     const tm = parse<TestMetrics>(metrics, "metrics")
     const tr = parse<Trend>(trend, "trend")
     try {
       const cap = (s: string) => (s.length > 2900 ? s.slice(0, 2900) + "…" : s)
       const dur = its.filter((i) => i.ms !== undefined).map((i) => `${EMOJI[i.st]} ${i.name} · ${fmt(i.ms)}`).join("\n") || "—"
-      const sections: string[] = [`*Duración por paso*\n${dur}`]
+      const sections: string[] = [`*Duration per step*\n${dur}`]
       if (tm) {
         const rows = [...tm.perFile].sort((a, b) => b.fail - a.fail).slice(0, 20)
           .map((r) => `${r.fail > 0 ? "✗" : "✓"} \`${r.file}\`  ${r.pass}✓ ${r.fail}✗`).join("\n")
         sections.push(`*Tests* — ${tm.passed}/${tm.total} ok · ${tm.failed} fail · ${tm.skipped} skip · ${tm.suites} suites\n${rows || "—"}`)
         if (tm.failedNames.length) {
           const extra = tm.failedNames.length > 25 ? `\n…(+${tm.failedNames.length - 25})` : ""
-          sections.push(`*Scenarios fallidos*\n${tm.failedNames.slice(0, 25).map((n) => `• ${n}`).join("\n")}${extra}`)
+          sections.push(`*Failed scenarios*\n${tm.failedNames.slice(0, 25).map((n) => `• ${n}`).join("\n")}${extra}`)
         }
       }
       if (tr) {
         const d = elapsedMs - tr.total_ms
         const scen = tm?.total ?? 0
         const ds = scen - tr.scenarios
-        sections.push(`*Tendencia vs anterior*\n⏱️ ${fmt(elapsedMs)} (${d < 0 ? "↓" : "↑"}${fmt(Math.abs(d))}) · 🧪 ${scen} scenarios (${ds >= 0 ? "+" : ""}${ds})`)
+        sections.push(`*Trend vs previous*\n⏱️ ${fmt(elapsedMs)} (${d < 0 ? "↓" : "↑"}${fmt(Math.abs(d))}) · 🧪 ${scen} scenarios (${ds >= 0 ? "+" : ""}${ds})`)
       }
       return await this.post(token, channel, JSON.stringify({
         text: `Breakdown (${st})`, thread_ts: threadTs,
@@ -330,7 +413,7 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
    *
    * @param blocks JSON of a Block Kit array, or "" for a plain-text reply.
    */
-  @func()
+  @func({ cache: "never" })
   async threadReply(token: Secret, channel: string, threadTs: string, text: string, blocks = ""): Promise<string> {
     if (!threadTs) return ""
     const b = parse<unknown[]>(blocks, "blocks")
@@ -347,16 +430,16 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
    * ones that say what broke; the first 2600 are the ones that say the build
    * started.
    */
-  @func()
+  @func({ cache: "never" })
   async failureDetail(token: Secret, channel: string, threadTs: string, stage: string, detail: string): Promise<string> {
     if (!threadTs) return ""
     let d = detail
-    if (d.length > 2600) d = "…(truncado)…\n" + d.slice(-2600)
+    if (d.length > 2600) d = "…(truncated)…\n" + d.slice(-2600)
     return await this.post(token, channel, JSON.stringify({
-      text: `Error en ${stage}`,
+      text: `Failed at ${stage}`,
       thread_ts: threadTs,
       blocks: [
-        { type: "section", text: { type: "mrkdwn", text: `:x: Falló en *${stage}*` } },
+        { type: "section", text: { type: "mrkdwn", text: `:x: Failed at *${stage}*` } },
         { type: "section", text: { type: "mrkdwn", text: "```" + d + "```" } },
       ],
     }))
