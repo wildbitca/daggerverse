@@ -4,14 +4,36 @@
     "why": "a TestReport becomes the card line and flat trend keys; scenarios/passed/failed keep their meaning",
     "fn": "render",
     "args": {
-      "title": "probe", "status": "fail", "event-type": "probe_card", "elapsed-ms": "60000",
+      "title": "probe",
+      "status": "fail",
+      "event-type": "probe_card",
+      "elapsed-ms": "60000",
       "meta": "{\"repo\":\"o/r\",\"ref\":\"refs/heads/main\",\"sha\":\"abc1234def\",\"actor\":\"a\",\"event\":\"push\",\"runId\":\"1\",\"runNumber\":\"2\",\"server\":\"https://github.com\",\"msg\":\"m\",\"runAttempt\":\"1\"}",
       "items": "[{\"name\":\"unit\",\"st\":\"fail\"}]",
       "trend": "{\"total_ms\":50000,\"scenarios\":9,\"passed\":9,\"failed\":0,\"gates_ok\":1,\"gates_total\":1,\"cov\":49.5}",
       "report": "@report.json"
     },
     "expect": {
-      ".metadata.event_payload": { "repo": "o/r", "sha": "abc1234def", "run_id": "1", "run_attempt": "1", "status": "fail", "total_ms": 60000, "scenarios": 10, "passed": 8, "failed": 2, "gates_ok": 0, "gates_total": 1, "t_skipped": 1, "t_flaky": 2, "t_ms": 271478, "cov": 50, "cov_br": 25, "mut": 58.33, "feat_cov": 71.43 },
+      ".metadata.event_payload": {
+        "repo": "o/r",
+        "sha": "abc1234def",
+        "run_id": "1",
+        "run_attempt": "1",
+        "status": "fail",
+        "total_ms": 60000,
+        "scenarios": 10,
+        "passed": 8,
+        "failed": 2,
+        "gates_ok": 0,
+        "gates_total": 1,
+        "t_skipped": 1,
+        "t_flaky": 2,
+        "t_ms": 271478,
+        "cov": 50,
+        "cov_br": 25,
+        "mut": 58.33,
+        "feat_cov": 71.43
+      },
       ".attachments[0].blocks[4].elements[0].text": "⏱️ 1m 00s  ·  ↑10.0s vs previous  ·  🚦 0/1 gates  ·  🧪 8/10 · 1 skip · 2 flaky · cov 50% · mut 58.33% · Δ +1 tests, cov +0.5 vs previous"
     }
   },
@@ -20,26 +42,46 @@
     "why": "a previous card without cov prints no cov delta — never a jump against a fabricated zero",
     "fn": "render",
     "args": {
-      "title": "probe", "status": "ok", "event-type": "probe_card", "elapsed-ms": "1000",
+      "title": "probe",
+      "status": "ok",
+      "event-type": "probe_card",
+      "elapsed-ms": "1000",
       "meta": "{\"repo\":\"o/r\",\"ref\":\"main\",\"sha\":\"abc\",\"actor\":\"a\",\"event\":\"push\",\"runId\":\"1\",\"runNumber\":\"2\",\"server\":\"https://github.com\",\"msg\":\"\"}",
       "items": "[]",
       "trend": "{\"total_ms\":1000,\"scenarios\":10,\"passed\":10,\"failed\":0,\"gates_ok\":0,\"gates_total\":0}",
       "report": "@report.json"
     },
-    "expect": { ".attachments[0].blocks[4].elements[0].text": "⏱️ 1.0s  ·  ±0ms vs previous  ·  🚦 0/0 gates  ·  🧪 8/10 · 1 skip · 2 flaky · cov 50% · mut 58.33% · Δ none vs previous" }
+    "expect": {
+      ".attachments[0].blocks[4].elements[0].text": "⏱️ 1.0s  ·  ±0ms vs previous  ·  🚦 0/0 gates  ·  🧪 8/10 · 1 skip · 2 flaky · cov 50% · mut 58.33% · Δ none vs previous"
+    }
   },
   {
     "name": "render-metrics-only",
     "why": "a caller that passes only metrics gets exactly the old payload keys, none of the new ones",
     "fn": "render",
     "args": {
-      "title": "probe", "status": "ok", "event-type": "probe_card", "elapsed-ms": "1000",
+      "title": "probe",
+      "status": "ok",
+      "event-type": "probe_card",
+      "elapsed-ms": "1000",
       "meta": "{\"repo\":\"o/r\",\"ref\":\"main\",\"sha\":\"abc\",\"actor\":\"a\",\"event\":\"push\",\"runId\":\"1\",\"runNumber\":\"2\",\"server\":\"https://github.com\",\"msg\":\"\"}",
       "items": "[]",
       "metrics": "{\"total\":5,\"passed\":4,\"failed\":1,\"skipped\":0,\"suites\":1,\"perFile\":[],\"failedNames\":[\"x\"]}"
     },
     "expect": {
-      ".metadata.event_payload | keys": ["failed", "gates_ok", "gates_total", "passed", "repo", "run_attempt", "run_id", "scenarios", "sha", "status", "total_ms"],
+      ".metadata.event_payload | keys": [
+        "failed",
+        "gates_ok",
+        "gates_total",
+        "passed",
+        "repo",
+        "run_attempt",
+        "run_id",
+        "scenarios",
+        "sha",
+        "status",
+        "total_ms"
+      ],
       ".attachments[0].blocks[4].elements[0].text": "⏱️ 1.0s  ·  🚦 0/0 gates  ·  🧪 4/5 scenarios"
     }
   },
@@ -48,7 +90,12 @@
     "why": "several reports must be merged by testing.merge first; slack refuses to guess",
     "fn": "render",
     "args": {
-      "title": "probe", "status": "ok", "event-type": "probe_card", "elapsed-ms": "1", "meta": "", "items": "[]",
+      "title": "probe",
+      "status": "ok",
+      "event-type": "probe_card",
+      "elapsed-ms": "1",
+      "meta": "",
+      "items": "[]",
       "report": "[{\"schema\":\"wildbit.test-report/v1\"}]"
     },
     "error": "merge the reports with testing.merge"
@@ -58,16 +105,77 @@
     "why": "the thread lists failures with lines, flaky, slowest 5, lanes, failing/UNCOVERED/undeclared features and report-only measures",
     "fn": "breakdown-text",
     "args": {
-      "items": "[{\"name\":\"unit\",\"st\":\"fail\",\"ms\":1000}]", "elapsed-ms": "60000",
+      "items": "[{\"name\":\"unit\",\"st\":\"fail\",\"ms\":1000}]",
+      "elapsed-ms": "60000",
       "trend": "{\"total_ms\":50000,\"scenarios\":9,\"passed\":9,\"failed\":0,\"gates_ok\":1,\"gates_total\":1,\"cov\":49.5,\"t_flaky\":0}",
       "report": "@report.json"
     },
     "expect": {
-      "map(split(\"\\n\")[0])": ["*Duration per step*", "*Tests* (unit+e2e+mutation) — 8/10 ok · 2 fail · 1 skip · 2 flaky · 7 files · 4m 31s", "*Lanes*", "*Failures*", "*Flaky — passed on retry*", "*Slowest 5*", "*Features* — 5/7 with tests", "*Measures* _(report-only, not gating)_", "*Trend vs previous*"],
+      "map(split(\"\\n\")[0])": [
+        "*Duration per step*",
+        "*Tests* (unit+e2e+mutation) — 8/10 ok · 2 fail · 1 skip · 2 flaky · 7 files · 4m 31s",
+        "*Lanes*",
+        "*Failures*",
+        "*Flaky — passed on retry*",
+        "*Slowest 5*",
+        "*Features* — 5/7 with tests",
+        "*Measures* _(report-only, not gating)_",
+        "*Trend vs previous*"
+      ],
       "map(select(startswith(\"*Failures*\")))[0] | split(\"\\n\")[1]": "• *clock throws* `test/core/clock_test.dart:6`",
-      "map(select(startswith(\"*Features*\")))[0] | split(\"\\n\")[1:]": ["❌ lost-pet — 1 failing", "⚠️ chat — no tests, not declared in coverage.tsv", "⚪ lost-pet — 3 unit tests, e2e UNCOVERED", "⚪ not-found-404 — no tests, e2e UNCOVERED"],
+      "map(select(startswith(\"*Features*\")))[0] | split(\"\\n\")[1:]": [
+        "❌ lost-pet — 1 failing",
+        "⚠️ chat — no tests, not declared in coverage.tsv",
+        "⚪ lost-pet — 3 unit tests, e2e UNCOVERED",
+        "⚪ not-found-404 — no tests, e2e UNCOVERED"
+      ],
       "map(select(startswith(\"*Measures*\")))[0] | split(\"\\n\")[3]": "• perf cold start: 2100 ms, over its budget of 2000 (baseline 1900)",
       ".[-1] | split(\"\\n\")[1]": "⏱️ 1m 00s (↑10.0s) · 🧪 10 tests (+1) · cov 50% (+0.5) · flaky 2 (+2)"
+    }
+  },
+  {
+    "name": "breakdown-report-file",
+    "why": "a workflow passes the report as a FILE (argv dies past ~128 kB), and unanchored scenario ids get their own thread section",
+    "fn": "breakdown-text",
+    "args": {
+      "items": "[]",
+      "elapsed-ms": "1000",
+      "report-file": "@@report-cypress.json"
+    },
+    "expect": {
+      "map(split(\"\\n\")[0])": [
+        "*Duration per step*",
+        "*Tests* (e2e) — 4/4 ok · 0 fail · 0 skip · 1 flaky · 1 files · 20.7s",
+        "*Flaky — passed on retry*",
+        "*Slowest 5*",
+        "*Scenario ids from a title only* — 2. A rename drops the feature's coverage row with nothing turning red; declare a scenarioId, a one-test spec file, or an id in the title."
+      ],
+      "map(select(startswith(\"*Scenario ids\")))[0] | split(\"\\n\")[1:]": [
+        "• checkout shows the tax breakdown",
+        "• checkout applies a discount code"
+      ]
+    }
+  },
+  {
+    "name": "render-report-file",
+    "why": "render takes the same file and its numbers reach the metadata",
+    "fn": "render",
+    "args": {
+      "title": "probe",
+      "status": "ok",
+      "event-type": "probe_card",
+      "elapsed-ms": "1000",
+      "meta": "{\"repo\":\"o/r\",\"ref\":\"main\",\"sha\":\"abc\",\"actor\":\"a\",\"event\":\"push\",\"runId\":\"1\",\"runNumber\":\"2\",\"server\":\"https://github.com\",\"msg\":\"\"}",
+      "items": "[]",
+      "report-file": "@@report-cypress.json"
+    },
+    "expect": {
+      ".metadata.event_payload | [.scenarios, .passed, .failed, .t_flaky]": [
+        4,
+        4,
+        0,
+        1
+      ]
     }
   }
 ]

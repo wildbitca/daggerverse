@@ -281,6 +281,8 @@ export class Runcard {
    *   job). When given, the merged report is mapped to features and any drift is
    *   posted to the thread — report-only.
    * @param coverageMap a coverage map outside `specs` (overrides `specs/coverage.tsv`).
+   * @param testReportsFile the same as `testReports`, from a file — a real report
+   *   passes the ~128 kB argv limit, so a workflow passes the path, never the text.
    */
   @func({ cache: "never" })
   async watch(
@@ -291,13 +293,16 @@ export class Runcard {
     slackToken?: Secret,
     workflowFile = "", branch = "", msg = "", title = "", runnerPrices = "",
     pollSeconds = 30, deadlineMinutes = 100, resumeAfter = "",
-    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File,
+    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File, testReportsFile?: File,
   ): Promise<string> {
     if (!slackChannel.trim() || !(await present(slackToken))) return "skipped"
     const token = slackToken as Secret
     const defs = parseRows(rows)
     assertEventType(eventType)
-    const inHand = reportsIn(testReports, "testReports") // validated before a runner is held
+    const inHand = [
+      ...reportsIn(testReports, "testReports"), // validated before a runner is held
+      ...(testReportsFile ? reportsIn(await testReportsFile.contents(), "testReportsFile") : []),
+    ]
     if (!selfJob.trim()) throw new Error("runcard: 'selfJob' is empty — the watcher would count itself and never see the run finish")
     const prices = { ...DEFAULT_PRICES, ...(parse<Record<string, number>>(runnerPrices, "runnerPrices") ?? {}) }
     const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
@@ -602,9 +607,13 @@ export class Runcard {
   @func({ cache: "never" })
   async runReports(
     githubToken: Secret, repo: string, runId: string, cacheBust: string,
-    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File,
+    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File, testReportsFile?: File,
   ): Promise<string> {
-    return JSON.stringify(await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), reportsIn(testReports, "testReports"), specs, coverageMap, cacheBust))
+    const inHand = [
+      ...reportsIn(testReports, "testReports"),
+      ...(testReportsFile ? reportsIn(await testReportsFile.contents(), "testReportsFile") : []),
+    ]
+    return JSON.stringify(await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), inHand, specs, coverageMap, cacheBust))
   }
 
   private async collectReports(

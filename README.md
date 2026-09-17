@@ -170,13 +170,21 @@ Fields are only ever added; a breaking change is `v2` in `schema`.
 |---|---|---|
 | `flutter test --machine` / `dart test --reporter json` | `flutterReport` | package:test 1.32.0 — retry = `error` + `Retry:` print + one success `testDone` |
 | `vitest run --reporter=json` (also `ng test` with `@angular/build:unit-test`) | `vitestReport` | vitest 4.1.11 — retry = `passed` with non-empty `failureMessages` |
-| JUnit XML: Maestro `--format junit`, Cypress, vitest junit | `junitReport` (`runner=maestro` ⇒ id = flow file basename) | vitest 4.1.11; Maestro from its v2.10.0 golden test, **not a device run** |
+| JUnit XML: Maestro `--format junit`, Cypress, vitest junit | `junitReport` (see **Scenario ids**) | vitest 4.1.11; Maestro from its v2.10.0 golden test, **not a device run** |
 | Stryker `mutation.json` | `strykerReport` | a real nightly artifact |
 | lcov (several tracefiles may be concatenated; unioned per line) | `lcovReport` | v8 via vitest 4.1.11 |
 | istanbul `coverage-summary.json` | `istanbulReport` | v8 via vitest 4.1.11 |
 
 No Karma/Jasmine parser: no repository in the organisation runs Karma (Angular projects use
 `@angular/build:unit-test` with the vitest runner, whose JSON is vitest's).
+
+**Pass big reports as FILES.** Every function that takes report JSON has a `*File` twin —
+`mergeFile`, `featuresFile`, `toMetricsFile`, `withPerfFile`, `summaryMarkdownFile`, and
+`--report-file` on `slack.render`/`slack.breakdown`, `--test-reports-file` on
+`runcard.report`/`watch`/`runReports`. `--reports="$(cat report.json)"` dies past the ~128 kB
+argv limit with an `Argument list too long` that names nothing, and a real report passes it
+easily (measured: 195 kB for one Angular repo). From a workflow, always the `*File` form;
+between modules the string form is fine, because that crosses GraphQL and not a command line.
 
 **`merge`** folds reports: the same lane sums (shards); different lanes sum into the top
 line and stay itemised in `lanes`; a scenario id seen in several reports is one scenario
@@ -187,6 +195,26 @@ Merging a merged report is idempotent. `summaryMarkdown` renders any report for
 
 Every case is a fixture in `testing/test/cases.json` (run by `test/run-cases.sh testing`,
 wired in CI) with the reason it exists.
+
+### Scenario ids
+
+A scenario id is what a `coverage.tsv` row names, so an id that moves when someone edits a
+test title silently deletes that feature's coverage. `junitReport` resolves it, most stable
+first, and says which rule it used in `scenario.idSource`:
+
+1. `<property name="scenarioId" value="…"/>` inside the testcase (`--id-property` names it).
+2. the testcase's `file` attribute, basename without extension — **only when that file holds
+   exactly one testcase** (a Maestro flow). A Cypress spec with twelve tests would otherwise
+   collapse twelve scenarios into one id.
+3. a declared id in the test title, matched by `--id-pattern` (default `TS-E2E-012`,
+   `TS-ATS8-020`: capitals and digits ending in a number).
+4. the test title itself — **fragile**. These are listed in `unanchoredScenarios`, counted in
+   the step summary and in the card's thread, so a repository sees what a rename would cost.
+
+**Cypress**: mocha-junit-reporter writes no `file` attribute, so a Cypress repo gets stable
+ids by putting a declared id in every test title (`it('TS-E2E-012 pays with a saved card', …)`)
+or by configuring the reporter to emit `<property name="scenarioId">`. Without either, every
+Cypress scenario is unanchored and the report says so on every run.
 
 ### Features
 
@@ -245,6 +273,16 @@ nothing durable. The artifact is also the file a later Grafana import reads.
   step summary or a check. The CI of this repository uploads two artifacts and asserts the
   merge through it on every run.
 
+**A cache volume is NOT a handoff channel.** Writing the report into a `cacheVolume` in one
+`dagger call` and reading it back in another is engine-internal state, and nothing here
+supports it: measured on `elinvo-site` (runs 35250686596 and 35252896937), the write ran and
+the read came back EMPTY on a GitHub runner while the same code worked against a local
+engine — with the same volume key AND the same namespace in both calls
+(`cacheVolume(key: "elinvo-site-test-reports", namespace: "mod(elinvo-site-ci.)")`), and
+still empty with the GHA cache backend unset for the read. The two supported shapes are:
+**one `dagger call` that RETURNS the report** (`-o report.json` writes it to the host), and
+**an artifact** for another job. Both are files; neither depends on what the engine kept.
+
 ### Consumer snippets
 
 **(a) Sharded Flutter unit tests + Maestro, many jobs (`pacha/app`).** Module side — the
@@ -293,7 +331,7 @@ return dag.testing().junitReportFile(c.file("/tmp/maestro.xml"), "e2e", { runner
       - name: Keep the card live until the run is done
         env: { GH_API_TOKEN: "${{ github.token }}", SLACK_BOT_TOKEN: "${{ secrets.SLACK_BOT_TOKEN }}" }
         run: |
-          dagger --progress plain -m https://github.com/wildbitca/daggerverse/runcard@runcard/v0.2.0 call watch \
+          dagger --progress plain -m https://github.com/wildbitca/daggerverse/runcard@runcard/v0.3.0 call watch \
             --repo="${{ github.repository }}" --ref="${{ github.ref }}" --sha="${{ github.sha }}" \
             --actor="${{ github.actor }}" --event="${{ github.event_name }}" \
             --run-id="${{ github.run_id }}" --run-number="${{ github.run_number }}" \
@@ -327,15 +365,15 @@ return t.merge(`[${unit},${cov}]`)
       - name: Step summary (optional)
         if: always()
         run: |
-          { dagger --progress plain -m https://github.com/wildbitca/daggerverse/testing@testing/v0.2.0 \
-              call summary-markdown --reports="$(cat test-report.json)"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          { dagger --progress plain -m https://github.com/wildbitca/daggerverse/testing@testing/v0.3.0 \
+              call summary-markdown-file --reports=./test-report.json; echo; } >> "$GITHUB_STEP_SUMMARY"
       - name: Gate on the suite's real exit
         run: jq -e '.exitCode == "0"' test-report.json >/dev/null
       - name: Slack card
         if: always()
         env: { GH_API_TOKEN: "${{ github.token }}", SLACK_BOT_TOKEN: "${{ secrets.SLACK_BOT_TOKEN }}" }
         run: |
-          dagger --progress plain -m https://github.com/wildbitca/daggerverse/runcard@runcard/v0.2.0 call report \
+          dagger --progress plain -m https://github.com/wildbitca/daggerverse/runcard@runcard/v0.3.0 call report \
             --repo="${{ github.repository }}" --ref="${{ github.ref }}" --sha="${{ github.sha }}" \
             --actor="${{ github.actor }}" --event="${{ github.event_name }}" \
             --run-id="${{ github.run_id }}" --run-number="${{ github.run_number }}" \

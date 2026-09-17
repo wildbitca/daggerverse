@@ -45,7 +45,7 @@
  * on each function. The caller does `JSON.stringify`; this module parses and
  * validates.
  */
-import { dag, Secret, Container, object, func } from "@dagger.io/dagger"
+import { dag, File, Secret, Container, object, func } from "@dagger.io/dagger"
 
 const CURL_IMG = "curlimages/curl:8.21.0"
 const POLL_IMG = "alpine:3.24" // curl+jq (via apk) to read history/replies from Slack
@@ -86,6 +86,7 @@ type TestReport = {
   slowest: { name: string; file: string; durationMs: number }[]
   failures: { name: string; file: string; declLine: number | null; failLine: number | null; kind: string; message: string }[]
   flakyTests?: { name: string; file: string }[]
+  unanchoredScenarios?: string[]
   features?: { id: string; tests: number; failed: number; scenarios: number; covered: boolean; e2e?: string }[]
   coverage?: { lines: number; branches?: number; source: string }
   mutation?: { score: number; survived: number; noCoverage: number; killed: number; timeout?: number }
@@ -294,6 +295,9 @@ function reportSections(rp: TestReport): string[] {
   if (rp.slowest.length) {
     out.push(`*Slowest 5*\n${rp.slowest.slice(0, 5).map((s) => `• ${fmt(s.durationMs)} — ${s.name} \`${s.file}\``).join("\n")}`)
   }
+  if (rp.unanchoredScenarios?.length) {
+    out.push(`*Scenario ids from a title only* — ${rp.unanchoredScenarios.length}. A rename drops the feature's coverage row with nothing turning red; declare a scenarioId, a one-test spec file, or an id in the title.\n${rp.unanchoredScenarios.slice(0, 10).map((x) => `• ${x}`).join("\n")}${more(rp.unanchoredScenarios.length, 10)}`)
+  }
   const fs = rp.features ?? []
   const failing = fs.filter((f) => f.failed > 0)
   const uncovered = fs.filter((f) => !f.covered || f.e2e === "uncovered" || f.e2e === "undeclared")
@@ -371,9 +375,12 @@ export class Slack {
    *                  the card line becomes `🧪 passed/total · skip · flaky · cov ·
    *                  Δ vs previous` and the metadata gains `t_skipped`, `t_flaky`,
    *                  `t_ms`, `cov`, `cov_br`, `mut` and `feat_cov`.
+   * @param reportFile the same report from a `File`, and what a WORKFLOW must use:
+   *                  `--report="$(cat report.json)"` dies at the ~128 kB argv
+   *                  limit, which a real report passes easily. It wins over `report`.
    */
   @func()
-  render(
+  async render(
     title: string,
     status: string,
     meta: string,
@@ -383,13 +390,14 @@ export class Slack {
     metrics = "",
     trend = "",
     report = "",
-  ): string {
+    reportFile?: File,
+  ): Promise<string> {
     const st = asStatus(status)
     const m = parse<Meta>(meta, "meta") ?? { repo: "", ref: "", sha: "", actor: "", event: "", runId: "", runNumber: "", server: "https://github.com", msg: "" }
     const its = parse<Item[]>(items, "items") ?? []
     const tm = parse<TestMetrics>(metrics, "metrics")
     const tr = parse<Trend>(trend, "trend")
-    const rp = parseReport(report)
+    const rp = parseReport(reportFile ? await reportFile.contents() : report)
     // Validated here and not left to Slack: an event_type outside this class is
     // accepted by chat.postMessage and then silently absent from the metadata,
     // so the trend goes quiet with no error anywhere (Gotcha 9).
@@ -573,6 +581,8 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=$LI
    *   line, flaky tests, the 5 slowest, lanes, failing / UNCOVERED / undeclared
    *   features, coverage and mutation, and perf over budget. Coverage, mutation
    *   and perf are REPORT-ONLY and worded so nobody reads a gate into them.
+   * @param reportFile the same report from a `File`; a workflow must use this one
+   *   (see `render`). It wins over `report`.
    */
   @func({ cache: "never" })
   async breakdown(
@@ -585,13 +595,14 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=$LI
     metrics = "",
     trend = "",
     report = "",
+    reportFile?: File,
   ): Promise<string> {
     if (!threadTs) return ""
     const st = status === "ok" || status === "waiting" ? status : "fail"
     const its = parse<Item[]>(items, "items") ?? []
     const tm = parse<TestMetrics>(metrics, "metrics")
     const tr = parse<Trend>(trend, "trend")
-    const rp = parseReport(report)
+    const rp = parseReport(reportFile ? await reportFile.contents() : report)
     try {
       const cap = (s: string) => (s.length > 2900 ? s.slice(0, 2900) + "…" : s)
       const sections = breakdownSections(its, elapsedMs, tm, tr, rp)
@@ -611,8 +622,9 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=$LI
    * fixtures, and so a caller can preview it.
    */
   @func()
-  breakdownText(items: string, elapsedMs: number, metrics = "", trend = "", report = ""): string {
-    return JSON.stringify(breakdownSections(parse<Item[]>(items, "items") ?? [], elapsedMs, parse<TestMetrics>(metrics, "metrics"), parse<Trend>(trend, "trend"), parseReport(report)))
+  async breakdownText(items: string, elapsedMs: number, metrics = "", trend = "", report = "", reportFile?: File): Promise<string> {
+    const rp = parseReport(reportFile ? await reportFile.contents() : report)
+    return JSON.stringify(breakdownSections(parse<Item[]>(items, "items") ?? [], elapsedMs, parse<TestMetrics>(metrics, "metrics"), parse<Trend>(trend, "trend"), rp))
   }
 
   /**
