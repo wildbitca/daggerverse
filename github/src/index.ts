@@ -885,6 +885,88 @@ export class Github {
   }
 
   /**
+   * The files inside a run's artifacts whose name starts with `namePrefix`, as
+   * JSON `{files: [{artifact, path, contents}], skipped: [{artifact, path, reason}]}`.
+   *
+   * This is how reports cross JOBS: each job uploads its report with
+   * `actions/upload-artifact` (no shared disk, any runner, and the artifact is
+   * listed by the API as soon as the upload step finishes), and a watcher in a
+   * different job reads them back here. `runcard.watch` uses it for
+   * `test-report-*`.
+   *
+   * ── WHICH ATTEMPT ───────────────────────────────────────────────────────────
+   * The artifacts API has no attempt filter: a run's list holds every attempt's.
+   * For each NAME the newest artifact wins. With `overwrite: true` on the upload
+   * (which a re-run needs anyway — v4 refuses a duplicate name otherwise) that
+   * is exactly the current state of the run: jobs re-run in attempt 2 replaced
+   * their reports, jobs carried over from attempt 1 kept theirs.
+   *
+   * Expired artifacts are skipped. Downloads follow the API's 302 to blob storage
+   * with `-L`; curl does not forward the Authorization header to another host.
+   * Needs `actions: read`.
+   *
+   * @param namePrefix only artifacts whose name starts with this, e.g. `test-report-`.
+   *   Required: reading every artifact of a run (an 80 MB APK among them) is
+   *   never what a caller means.
+   * @param pattern    glob of the files to return inside each artifact.
+   * @param maxBytes   a file larger than this is listed in `skipped`, not returned.
+   * @param cacheBust  MUST vary per call.
+   */
+  @func({ cache: "never" })
+  async runArtifactFiles(
+    token: Secret, repo: string, runId: string, namePrefix: string, cacheBust: string,
+    pattern = "**/*.json", maxBytes = 5000000, maxPages = 10,
+  ): Promise<string> {
+    required(repo, "repo", "without it there is no run to read")
+    required(runId, "runId", "it identifies the run whose artifacts are read")
+    required(namePrefix, "namePrefix", "without it every artifact of the run would be downloaded")
+    required(cacheBust, "cacheBust", "without it Dagger serves a cached exec and a report uploaded since the last read never appears")
+    type Artifact = { id: number; name: string; expired?: boolean; created_at?: string; archive_download_url?: string }
+    const all: Artifact[] = []
+    for (let page = 1; ; page++) {
+      if (page > maxPages) throw new Error(`github: run ${runId} in ${repo} has more than ${maxPages * 100} artifacts — failing rather than reading a truncated list`)
+      const r = await this.request(token, `${API}/repos/${repo}/actions/runs/${runId}/artifacts?per_page=100&page=${page}`, cacheBust)
+      if (r.status !== 200) {
+        throw new Error(`github: could not list the artifacts of run ${runId} in ${repo} (HTTP ${r.status}) — is 'actions: read' missing from permissions? Body: ${r.body.slice(0, 400)}`)
+      }
+      const j = JSON.parse(r.body) as { total_count?: number; artifacts?: Artifact[] }
+      const batch = j.artifacts ?? []
+      all.push(...batch)
+      if (batch.length === 0 || all.length >= (j.total_count ?? 0)) break
+    }
+    const newest = new Map<string, Artifact>()
+    for (const a of all) {
+      if (a.expired || !a.name.startsWith(namePrefix)) continue
+      const prev = newest.get(a.name)
+      if (!prev || Date.parse(a.created_at ?? "") > Date.parse(prev.created_at ?? "")) newest.set(a.name, a)
+    }
+    const files: { artifact: string; path: string; contents: string }[] = []
+    const skipped: { artifact: string; path: string; reason: string }[] = []
+    for (const a of [...newest.values()].sort((x, y) => x.name.localeCompare(y.name))) {
+      const dir = dag
+        .container()
+        .from(CURL_IMG)
+        .withSecretVariable("GH_TOK", token)
+        .withEnvVariable("URL", `${API}/repos/${repo}/actions/artifacts/${a.id}/zip`)
+        .withEnvVariable("CACHE_BUST", cacheBust)
+        .withExec(["sh", "-c",
+          `set -e; mkdir -p /tmp/art; ` +
+          `code=$(curl -sS -L -o /tmp/a.zip -w '%{http_code}' -H "Authorization: Bearer $GH_TOK" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "$URL"); ` +
+          `if [ "$code" != 200 ]; then echo "HTTP $code" > /tmp/art/.download-error; else unzip -q -o /tmp/a.zip -d /tmp/art; fi`])
+        .directory("/tmp/art")
+      const err = await dir.file(".download-error").contents().catch(() => "")
+      if (err) { skipped.push({ artifact: a.name, path: "", reason: `download failed (${err.trim()})` }); continue }
+      for (const path of await dir.glob(pattern)) {
+        const f = dir.file(path)
+        const size = await f.size()
+        if (size > maxBytes) { skipped.push({ artifact: a.name, path, reason: `${size} bytes, over maxBytes ${maxBytes}` }); continue }
+        files.push({ artifact: a.name, path, contents: await f.contents() })
+      }
+    }
+    return JSON.stringify({ files, skipped })
+  }
+
+  /**
    * Clean a raw job log down to its last meaningful lines. Pure; public so the
    * filter can be asserted on a fixture instead of on a real failure.
    */
