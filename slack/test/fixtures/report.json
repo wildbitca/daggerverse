@@ -1,0 +1,340 @@
+{
+  "schema": "wildbit.test-report/v1",
+  "lane": "unit+e2e+mutation",
+  "runner": "flutter+maestro",
+  "exitCode": "1",
+  "totals": {
+    "passed": 8,
+    "failed": 2,
+    "skipped": 1,
+    "flaky": 2,
+    "durationMs": 271478
+  },
+  "suites": [
+    {
+      "file": "test/core/clock_test.dart",
+      "pass": 1,
+      "fail": 1,
+      "skip": 0,
+      "durationMs": 141,
+      "lane": "unit"
+    },
+    {
+      "file": "test/features/lost_pet/sighting_test.dart",
+      "pass": 2,
+      "fail": 1,
+      "skip": 1,
+      "durationMs": 61,
+      "lane": "unit"
+    },
+    {
+      "file": "test/e2e/android/login_otp.yaml",
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 41200,
+      "lane": "e2e"
+    },
+    {
+      "file": "test/e2e/android/like.yaml",
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 58100,
+      "lane": "e2e"
+    },
+    {
+      "file": "test/e2e/android/adopt_button.yaml",
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 30000,
+      "lane": "e2e"
+    },
+    {
+      "file": "test/e2e/android/scroll_feed.yaml",
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 52300,
+      "lane": "e2e"
+    },
+    {
+      "file": "test/e2e/android/record_smoke.yaml",
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 25000,
+      "lane": "e2e"
+    }
+  ],
+  "slowest": [
+    {
+      "name": "Like a post",
+      "file": "test/e2e/android/like.yaml",
+      "durationMs": 63900
+    },
+    {
+      "name": "Like a post",
+      "file": "test/e2e/android/like.yaml",
+      "durationMs": 58100
+    },
+    {
+      "name": "Scroll feed",
+      "file": "test/e2e/android/scroll_feed.yaml",
+      "durationMs": 52300
+    },
+    {
+      "name": "Login with OTP",
+      "file": "test/e2e/android/login_otp.yaml",
+      "durationMs": 41200
+    },
+    {
+      "name": "Adopt button",
+      "file": "test/e2e/android/adopt_button.yaml",
+      "durationMs": 30000
+    },
+    {
+      "name": "record_smoke",
+      "file": "test/e2e/android/record_smoke.yaml",
+      "durationMs": 25000
+    },
+    {
+      "name": "clock ticks",
+      "file": "test/core/clock_test.dart",
+      "durationMs": 123
+    },
+    {
+      "name": "compares two strings",
+      "file": "test/features/lost_pet/sighting_test.dart",
+      "durationMs": 43
+    },
+    {
+      "name": "clock throws",
+      "file": "test/core/clock_test.dart",
+      "durationMs": 18
+    },
+    {
+      "name": "passes",
+      "file": "test/features/lost_pet/sighting_test.dart",
+      "durationMs": 15
+    }
+  ],
+  "failures": [
+    {
+      "name": "clock throws",
+      "file": "test/core/clock_test.dart",
+      "declLine": 5,
+      "failLine": 6,
+      "failCol": 7,
+      "kind": "error",
+      "message": "Bad state: boom"
+    },
+    {
+      "name": "compares two strings",
+      "file": "test/features/lost_pet/sighting_test.dart",
+      "declLine": 8,
+      "failLine": 10,
+      "failCol": 5,
+      "kind": "failure",
+      "message": "Expected: 'b'\n  Actual: 'a'\n   Which: is different.\n          Expected: b\n            Actual: a\n                    ^\n           Differ at offset 0"
+    }
+  ],
+  "perf": [
+    {
+      "name": "cold start",
+      "value": 2100,
+      "unit": "ms",
+      "baseline": 1900,
+      "budget": 2000
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "login_otp",
+      "name": "Login with OTP",
+      "tags": [
+        "auth",
+        "smoke"
+      ],
+      "status": "pass",
+      "durationMs": 41200,
+      "attempts": 1,
+      "file": "test/e2e/android/login_otp.yaml"
+    },
+    {
+      "id": "like",
+      "name": "Like a post",
+      "tags": [
+        "like"
+      ],
+      "status": "pass",
+      "durationMs": 58100,
+      "attempts": 2,
+      "file": "test/e2e/android/like.yaml"
+    },
+    {
+      "id": "adopt_button",
+      "name": "Adopt button",
+      "tags": [
+        "adopt"
+      ],
+      "status": "pass",
+      "durationMs": 30000,
+      "attempts": 1,
+      "file": "test/e2e/android/adopt_button.yaml"
+    },
+    {
+      "id": "scroll_feed",
+      "name": "Scroll feed",
+      "tags": [],
+      "status": "pass",
+      "durationMs": 52300,
+      "attempts": 1,
+      "file": "test/e2e/android/scroll_feed.yaml"
+    },
+    {
+      "id": "record_smoke",
+      "name": "record_smoke",
+      "tags": [],
+      "status": "pass",
+      "durationMs": 25000,
+      "attempts": 1,
+      "file": "test/e2e/android/record_smoke.yaml"
+    }
+  ],
+  "flakyTests": [
+    {
+      "name": "flaky once",
+      "file": "test/features/lost_pet/sighting_test.dart"
+    },
+    {
+      "name": "Like a post",
+      "file": "test/e2e/android/like.yaml"
+    }
+  ],
+  "coverage": {
+    "lines": 50,
+    "source": "lcov",
+    "linesFound": 4,
+    "linesHit": 2,
+    "branches": 25
+  },
+  "mutation": {
+    "score": 58.33,
+    "killed": 6,
+    "timeout": 1,
+    "survived": 3,
+    "noCoverage": 2
+  },
+  "lanes": [
+    {
+      "lane": "unit",
+      "runner": "flutter",
+      "exitCode": "1",
+      "totals": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 1,
+        "flaky": 1,
+        "durationMs": 978
+      },
+      "coverage": {
+        "lines": 50,
+        "source": "lcov",
+        "linesFound": 4,
+        "linesHit": 2,
+        "branches": 25
+      }
+    },
+    {
+      "lane": "e2e",
+      "runner": "maestro",
+      "exitCode": "1",
+      "totals": {
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0,
+        "flaky": 1,
+        "durationMs": 270500
+      }
+    },
+    {
+      "lane": "mutation",
+      "runner": "stryker",
+      "exitCode": "0",
+      "totals": {
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "flaky": 0,
+        "durationMs": 0
+      },
+      "mutation": {
+        "score": 58.33,
+        "killed": 6,
+        "timeout": 1,
+        "survived": 3,
+        "noCoverage": 2
+      }
+    }
+  ],
+  "features": [
+    {
+      "id": "adoption",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 1,
+      "covered": true,
+      "e2e": "flow"
+    },
+    {
+      "id": "auth",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 1,
+      "covered": true,
+      "e2e": "flow"
+    },
+    {
+      "id": "chat",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 0,
+      "covered": false,
+      "e2e": "undeclared"
+    },
+    {
+      "id": "feed",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 1,
+      "covered": true,
+      "e2e": "flow"
+    },
+    {
+      "id": "likes",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 1,
+      "covered": true,
+      "e2e": "flow"
+    },
+    {
+      "id": "lost-pet",
+      "tests": 3,
+      "failed": 1,
+      "scenarios": 0,
+      "covered": true,
+      "e2e": "uncovered"
+    },
+    {
+      "id": "not-found-404",
+      "tests": 0,
+      "failed": 0,
+      "scenarios": 0,
+      "covered": false,
+      "e2e": "uncovered"
+    }
+  ]
+}
