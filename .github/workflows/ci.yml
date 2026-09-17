@@ -23,6 +23,8 @@ on:
 
 permissions:
   contents: read
+  # `github.runJobs` reads this run's own jobs in the probe below.
+  actions: read
 
 concurrency:
   group: daggerverse-ci-${{ github.ref }}
@@ -89,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           rc=0
-          for m in slack scan guards github identity testing; do
+          for m in slack scan guards github identity testing runcard; do
             echo "── $m"
             dagger develop -m "./$m" >/dev/null
             ( cd "$m" && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
@@ -103,8 +105,54 @@ jobs:
       - name: Every module loads and exposes functions
         run: |
           set -euo pipefail
-          for m in slack scan guards github identity testing; do
+          for m in slack scan guards github identity testing runcard; do
             n="$(dagger -m "./$m" functions 2>/dev/null | grep -cvE '^\s*$|^Name\s' || true)"
             echo "$m: $n function(s)"
             [ "${n:-0}" -ge 1 ] || { echo "::error title=Module exposes nothing::$m listed no functions — it compiled but did not register"; exit 1; }
           done
+
+      # A live read that PROVES it was not served from cache. `runJobs` is asked for
+      # this very run while this very job is executing, so job `ci` MUST come back
+      # `in_progress`. A replayed exec from any earlier run would say `completed`
+      # (every earlier `ci` has finished) — or would not list this run at all.
+      - name: Probe github.runJobs against this run (no cached replay)
+        env:
+          GH_API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$(dagger --progress plain -m ./github call run-jobs \
+            --token=env:GH_API_TOKEN --repo="${{ github.repository }}" \
+            --run-id="${{ github.run_id }}" --run-attempt="${{ github.run_attempt }}" \
+            --cache-bust="${{ github.run_id }}-${{ github.run_attempt }}-$(date +%s%N)")"
+          st="$(jq -r '[.[] | select(.name == "ci")][0].status // "absent"' <<<"$out")"
+          echo "job ci: $st"
+          [ "$st" = "in_progress" ] || { echo "::error title=runJobs served stale data::job 'ci' of the running run came back '$st', expected in_progress"; exit 1; }
+
+      # The row logic behind every card, on fixtures: matrix aggregation, all-skipped,
+      # approval-only, startup_failure, and a prefix collision resolved by exact mode.
+      - name: runcard row fixtures
+        run: runcard/test/run-fixtures.sh
+
+      # The log tail is what a person reads in the thread when a job fails. The
+      # fixture ends the way real logs do — a step after the failure, then the
+      # post-job cleanup — and neither may reach the tail.
+      - name: github log-tail fixture
+        run: |
+          set -euo pipefail
+          got="$(dagger --progress plain -m ./github call log-tail --log="$(cat github/test/fixtures/failed-job.log)")"
+          diff <(printf '%s\n' "$got") github/test/fixtures/failed-job.expected
+
+      # Dependabot and fork PRs have no Slack token. `watch` must return at once
+      # instead of polling for 100 minutes on a runner.
+      - name: runcard.watch without a Slack token returns immediately
+        env:
+          GH_API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$(timeout 300 dagger --progress plain -m ./runcard call watch \
+            --repo="${{ github.repository }}" --ref="${{ github.ref }}" --sha="${{ github.sha }}" \
+            --actor=probe --event=probe --run-id="${{ github.run_id }}" --run-number=0 \
+            --run-attempt="${{ github.run_attempt }}" --server="${{ github.server_url }}" \
+            --rows='[{"row":"ci","match":"ci","mode":"exact"}]' --self-job=ci --event-type=daggerverse_probe \
+            --github-token=env:GH_API_TOKEN --slack-channel=C0PROBE)"
+          [ "$out" = "skipped" ] || { echo "::error title=watch did not skip::expected 'skipped', got '$out'"; exit 1; }

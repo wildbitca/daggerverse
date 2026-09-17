@@ -1,0 +1,16 @@
+{
+  "why": "Matrix legs aggregate into one row as n/m; one leg running keeps the row running, and the watcher's own job is excluded.",
+  "selfJob": "Slack — live card",
+  "rows": [{"row": "checks", "match": "ci", "mode": "exact"}, {"row": "unit-tests", "match": "test-unit"}],
+  "jobs": [
+    {"id": 1, "name": "Slack — live card", "status": "in_progress", "conclusion": null, "started_at": "2026-09-17T01:49:55Z", "completed_at": null},
+    {"id": 2, "name": "ci", "status": "completed", "conclusion": "success", "started_at": "2026-09-17T01:49:55Z", "completed_at": "2026-09-17T01:57:35Z"},
+    {"id": 3, "name": "test-unit (0)", "status": "completed", "conclusion": "success", "started_at": "2026-09-17T01:57:38Z", "completed_at": "2026-09-17T02:01:00Z"},
+    {"id": 4, "name": "test-unit (1)", "status": "completed", "conclusion": "failure", "started_at": "2026-09-17T01:57:38Z", "completed_at": "2026-09-17T02:02:00Z"},
+    {"id": 5, "name": "test-unit (2)", "status": "in_progress", "conclusion": null, "started_at": "2026-09-17T01:57:39Z", "completed_at": null}
+  ],
+  "expect": [
+    {"name": "checks", "st": "ok", "note": null, "ms": 460000},
+    {"name": "unit-tests", "st": "running", "note": "2/3 · 1 failed"}
+  ]
+}

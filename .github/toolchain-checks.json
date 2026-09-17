@@ -9,5 +9,7 @@
  {"kind":"count","file":"guards/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"guards engine v{dagger}"},
  {"kind":"count","file":"github/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"github engine v{dagger}"},
  {"kind":"count","file":"identity/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"identity engine v{dagger}"},
+ {"kind":"count","file":"runcard/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"runcard engine v{dagger}"},
+ {"kind":"present","file":"github/src/index.ts","literal":"curlimages/curl:{curl}","what":"curl {curl} (github)"},
  {"kind":"count","file":"testing/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"testing engine v{dagger}"}
 ]

@@ -1,0 +1,11 @@
+{
+  "why": "startup_failure is a failure with no steps and no log; it must paint the row red and say why.",
+  "rows": [{"row": "e2e", "match": "e2e"}],
+  "jobs": [
+    {"id": 1, "name": "e2e (pixel)", "status": "completed", "conclusion": "startup_failure", "started_at": null, "completed_at": "2026-09-17T01:00:05Z"},
+    {"id": 2, "name": "e2e (tablet)", "status": "completed", "conclusion": "success", "started_at": "2026-09-17T01:00:00Z", "completed_at": "2026-09-17T01:20:00Z"}
+  ],
+  "expect": [
+    {"name": "e2e", "st": "fail", "note": "1 of 2 failed · startup failure"}
+  ]
+}

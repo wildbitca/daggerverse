@@ -1,0 +1,12 @@
+{
+  "why": "Every leg skipped (an if: that was false) is a skip, not an ok and not a pending.",
+  "rows": [{"row": "store", "match": "Android — publish to store"}, {"row": "release", "match": "GitHub release", "mode": "exact"}],
+  "jobs": [
+    {"id": 1, "name": "Android — publish to store", "status": "completed", "conclusion": "skipped", "started_at": null, "completed_at": "2026-09-17T02:00:00Z"},
+    {"id": 2, "name": "GitHub release", "status": "completed", "conclusion": "skipped", "started_at": null, "completed_at": "2026-09-17T02:00:00Z"}
+  ],
+  "expect": [
+    {"name": "store", "st": "skip", "note": null},
+    {"name": "release", "st": "skip", "note": null}
+  ]
+}

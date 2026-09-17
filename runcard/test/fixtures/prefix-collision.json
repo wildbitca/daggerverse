@@ -1,0 +1,14 @@
+{
+  "why": "Prefix 'ci' also matches 'ci-e2e'. The exact row owns 'ci'; the most specific row wins, so no job is counted twice.",
+  "rows": [{"row": "checks", "match": "ci", "mode": "exact"}, {"row": "e2e", "match": "ci-e2e"}, {"row": "anything-ci", "match": "ci"}],
+  "jobs": [
+    {"id": 1, "name": "ci", "status": "completed", "conclusion": "success", "started_at": "2026-09-17T01:00:00Z", "completed_at": "2026-09-17T01:05:00Z"},
+    {"id": 2, "name": "ci-e2e (0)", "status": "completed", "conclusion": "failure", "started_at": "2026-09-17T01:00:00Z", "completed_at": "2026-09-17T01:05:00Z"},
+    {"id": 3, "name": "ci-lint", "status": "queued", "conclusion": null, "started_at": null, "completed_at": null}
+  ],
+  "expect": [
+    {"name": "checks", "st": "ok", "note": null},
+    {"name": "e2e", "st": "fail", "note": null},
+    {"name": "anything-ci", "st": "pending", "note": "queued"}
+  ]
+}

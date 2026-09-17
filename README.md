@@ -18,11 +18,12 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 
 | Module | What it owns | Status |
 |---|---|---|
-| `slack/` | Progress card, thread detail, breakdown, trend (Slack is the trend store) | **published** |
+| `slack/` | Progress card, thread detail, breakdown, trend (Slack is the trend store), card lookup by metadata | **published** |
+| `runcard/` | One live Slack card per workflow run: multi-job watcher, single-job report, thread under a run's card | **published** |
 | `identity/` | OIDC→STS for GCP, GitHub App JWT, Secret Manager reads | **published** |
 | `guards/` | Toolchain pins, shared pins across repos, Dagger flag probe, embedded-bash syntax | **published** |
 | `scan/` | gitleaks and Trivy, with the exact invocations ADR-0003 §2.2 pins | **published** |
-| `github/` | check-runs queries, releases, reruns, step summaries, annotations | **published** |
+| `github/` | check-runs queries, releases, reruns, step summaries, annotations, run/job reads for live cards | **published** |
 | `testing/` | Native test-report parsers (`flutter test --machine`, `vitest --reporter=json`) | **published** |
 
 ## Consuming a module
@@ -65,6 +66,53 @@ policy blocks modifying it over the API — it returns 422 and, because the prov
 it in the same PATCH as `visibility`, it takes the visibility change down with it. That is
 why nothing in this repo may carry a credential, and why `scan.gitleaks` is the thing that
 has to catch one.
+
+## Live run cards (`runcard`)
+
+Every pipeline reports to Slack with **one card per run**. Three shapes, one look:
+
+| Workflow shape | Function | Where it runs |
+|---|---|---|
+| many jobs | `watch` | its own job with **no `needs`**, `continue-on-error: true`, `timeout-minutes` above `deadlineMinutes` |
+| one job | `report` | the job's last step, `if: always()`, `--job-status=${{ job.status }}` |
+| detail from inside a Dagger call | `thread` (or `cardTs` + `slack.*`) | anywhere in the run |
+
+`watch` polls `github.runJobs` every `pollSeconds`, maps jobs to rows (`[{row, match,
+mode}]`; `prefix` aggregates a matrix as n/m, the most specific row wins), rewrites the card
+on change, posts each failed job once to the thread (failing step, annotations, cleaned log
+tail) and closes with statistics. It **never waits on a human**: when only
+environment-approval jobs (`status: waiting`) remain it marks them "awaiting approval",
+closes the card as `waiting` and exits. With no Slack token or channel (Dependabot, fork
+PRs) every function returns at once.
+
+**Permissions.** The token needs `actions: read` (jobs, logs, workflow runs) and
+`checks: read` (annotations). A job-level `permissions:` block **replaces** the
+workflow-level one, so a watcher job that declares its own must list both.
+
+**The card's metadata is API.** `event_type` is the caller's `eventType`;
+`event_payload` carries `repo`, `sha`, `run_id`, `run_attempt`, `status` and the trend
+numbers. Readers:
+
+- `slack.readTrend` — `event_type` + `repo`, for "vs previous".
+- `slack.findCard` / `runcard.thread` — `event_type` + `run_id` (+ `run_attempt`).
+- `deploy-gate` — `findBuildCard(channel, sha)` in `src/slack.ts`.
+
+**deploy-gate compatibility** (read from `deploy-gate` at `03cdc85`). On a
+`deployment_protection_rule` webhook it scans the newest **30** top-level messages of the
+repo's channel (`SLACK_CHANNELS`, `include_all_metadata=true`) and threads its approval card
+under the first one whose `metadata.event_payload.sha` equals the deployment's commit. It
+does **not** filter on `event_type` or `run_id`. Consequences:
+
+- `watch` posts its card as soon as it starts, so the card exists long before a gated job
+  reaches its environment; the approval request lands in the card's thread.
+- Any other card for the same commit posted later in that channel (a `report` card from a
+  second workflow, a re-run's card) is newer and wins. Keep one card-posting workflow per
+  commit per channel, or teach deploy-gate to match `run_id` — the callback URL it already
+  receives contains the run id.
+- If a gated job has no `needs` and the webhook arrives before the watcher posts (module
+  load takes ~1–2 min on a cold runner), the request goes to the channel unthreaded.
+- The card is not rewritten after approval: it stays `waiting` ("awaiting approval" /
+  "after approval"). The verdict lives in the thread, posted by deploy-gate.
 
 ## Versioning
 

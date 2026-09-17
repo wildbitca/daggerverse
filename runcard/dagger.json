@@ -1,0 +1,17 @@
+{
+  "name": "runcard",
+  "engineVersion": "v0.21.9",
+  "sdk": {
+    "source": "typescript"
+  },
+  "dependencies": [
+    {
+      "name": "github",
+      "source": "../github"
+    },
+    {
+      "name": "slack",
+      "source": "../slack"
+    }
+  ]
+}

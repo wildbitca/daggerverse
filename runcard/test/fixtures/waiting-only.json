@@ -1,0 +1,13 @@
+{
+  "why": "Jobs parked on an environment approval are pending 'awaiting approval'; a row whose job is not listed yet stays plain pending.",
+  "rows": [{"row": "build", "match": "Build"}, {"row": "prod", "match": "Deploy — prod", "mode": "exact"}, {"row": "release", "match": "GitHub release", "mode": "exact"}],
+  "jobs": [
+    {"id": 1, "name": "Build", "status": "completed", "conclusion": "success", "started_at": "2026-09-17T01:00:00Z", "completed_at": "2026-09-17T01:10:00Z"},
+    {"id": 2, "name": "Deploy — prod", "status": "waiting", "conclusion": null, "started_at": null, "completed_at": null}
+  ],
+  "expect": [
+    {"name": "build", "st": "ok", "note": null},
+    {"name": "prod", "st": "pending", "note": "awaiting approval"},
+    {"name": "release", "st": "pending", "note": null}
+  ]
+}
