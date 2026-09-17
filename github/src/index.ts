@@ -58,6 +58,73 @@ type Job = {
   steps?: { name: string; conclusion: string | null }[]
 }
 
+/** A job as `runJobs` returns it: the API's field names, reduced to what cards read. */
+type RunJob = {
+  id: number; name: string; status: string; conclusion: string | null; html_url: string
+  created_at: string; started_at: string | null; completed_at: string | null
+  labels: string[]; runner_name: string | null
+  steps: { number: number; name: string; status: string; conclusion: string | null; started_at: string | null; completed_at: string | null }[]
+}
+
+function reduceJob(j: RunJob): RunJob {
+  return {
+    id: j.id, name: j.name, status: j.status, conclusion: j.conclusion ?? null, html_url: j.html_url,
+    created_at: j.created_at, started_at: j.started_at ?? null, completed_at: j.completed_at ?? null,
+    labels: j.labels ?? [], runner_name: j.runner_name ?? null,
+    steps: (j.steps ?? []).map((st) => ({
+      number: st.number, name: st.name, status: st.status, conclusion: st.conclusion ?? null,
+      started_at: st.started_at ?? null, completed_at: st.completed_at ?? null,
+    })),
+  }
+}
+
+/**
+ * The last `lines` meaningful lines of a job log.
+ *
+ * WHERE THE TAIL ENDS. The literal end of a failed job's log is never the cause:
+ * it is the post-job cleanup (`actions/checkout` unsetting credentials, orphan
+ * processes) and any `if: always()` step that ran after the failure. Measured on
+ * pacha job 104928721554: the last 25 lines were 25 lines of `git config
+ * --unset`, and the failure was 58 lines earlier. So the log is cut after the
+ * LAST `##[error]` line, or, when there is none, before `Post job cleanup.`.
+ *
+ * WHAT IS DROPPED. The ISO timestamp every line starts with, ANSI colour, and
+ * the BODY of every `##[group]` block — the step's script and its `env:` dump,
+ * which are the same on every run and push the output out of the tail. The
+ * group's first line (`Run <command>`) is kept as `▶ Run <command>`, so the
+ * reader still sees which step the output belongs to. `##[error]` and
+ * `##[warning]` are kept; other `##[…]` bookkeeping is not.
+ */
+function cleanLogTail(log: string, lines: number): string {
+  const n = Math.max(1, Math.floor(lines))
+  const all = (log ?? "").split(/\r?\n/).map((raw) => raw
+    .replace(/^\uFEFF/, "")
+    .replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, "")
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""))
+  let end = -1
+  for (let k = all.length - 1; k >= 0; k--) if (all[k].startsWith("##[error]")) { end = k; break }
+  if (end < 0) {
+    const post = all.findIndex((l) => l.startsWith("Post job cleanup."))
+    end = post < 0 ? all.length - 1 : post - 1
+  }
+  const kept: string[] = []
+  let inGroup = false
+  for (const l of all.slice(0, end + 1)) {
+    if (l.startsWith("##[group]")) {
+      inGroup = true
+      const title = l.slice("##[group]".length)
+      if (title.startsWith("Run ")) kept.push(`▶ ${title}`)
+      continue
+    }
+    if (l.startsWith("##[endgroup]")) { inGroup = false; continue }
+    if (inGroup || !l.trim()) continue
+    if (l.startsWith("##[") && !l.startsWith("##[error]") && !l.startsWith("##[warning]")) continue
+    if (/^(Cleaning up orphan processes|Terminate orphan process)/.test(l)) continue
+    kept.push(l)
+  }
+  return kept.slice(-n).join("\n").slice(-3000)
+}
+
 /**
  * Parse a JSON argument, naming the parameter in the error.
  *
@@ -673,6 +740,159 @@ export class Github {
     )
   }
 
+  // ── Run introspection (read-only, for live cards) ─────────────────────────
+
+  /**
+   * Every job of one attempt of a workflow run, as JSON `RunJob[]`.
+   *
+   * Paginated, and it FAILS rather than truncating past `maxPages`. A watcher
+   * that silently sees only the first 100 jobs closes its card as "done" while
+   * the jobs it never saw are still running, and reports a green run that is
+   * not over. An error names the problem; a truncated list looks like an answer.
+   *
+   * Read through a `curl` container like every other call here, and cache-busted
+   * the same way — a poll served from Dagger's cache returns the jobs as they
+   * were on the first poll, forever. The function itself is `cache: "never"` as
+   * well: the bust is what keeps the exec honest, the policy is what keeps the
+   * CALL honest when a caller reuses a bust by mistake.
+   *
+   * Shape of each element: `{id, name, status, conclusion, html_url, created_at,
+   * started_at, completed_at, labels, runner_name, steps: [{number, name, status,
+   * conclusion, started_at, completed_at}]}` — the API's own field names, reduced.
+   *
+   * Needs `actions: read`.
+   *
+   * @param runAttempt the attempt (`github.run_attempt`). Empty reads the latest
+   *   attempt, which on a re-run is NOT the attempt the caller is running in.
+   * @param cacheBust MUST change on every call (poll index plus a timestamp).
+   * @param maxPages 100 jobs per page. Past this the call fails loudly.
+   */
+  @func({ cache: "never" })
+  async runJobs(
+    token: Secret, repo: string, runId: string, runAttempt: string, cacheBust: string, maxPages = 10,
+  ): Promise<string> {
+    required(repo, "repo", "without it there is no run to list")
+    required(runId, "runId", "it identifies the run whose jobs are listed")
+    required(cacheBust, "cacheBust", "without it Dagger serves a cached exec and every poll returns the first poll's jobs")
+    if (maxPages < 1) throw new Error(`github: 'maxPages' must be >= 1, got ${maxPages}`)
+    const base = runAttempt.trim()
+      ? `${API}/repos/${repo}/actions/runs/${runId}/attempts/${runAttempt.trim()}/jobs`
+      : `${API}/repos/${repo}/actions/runs/${runId}/jobs?filter=latest`
+    const sep = base.includes("?") ? "&" : "?"
+    const out: RunJob[] = []
+    for (let page = 1; page <= maxPages; page++) {
+      const r = await this.request(token, `${base}${sep}per_page=100&page=${page}`, cacheBust)
+      if (r.status !== 200) {
+        throw new Error(`github: could not list the jobs of run ${runId} in ${repo} (HTTP ${r.status}) — is 'actions: read' missing from permissions? A job-level 'permissions:' block REPLACES the workflow's. Body: ${r.body.slice(0, 400)}`)
+      }
+      const j = JSON.parse(r.body) as { total_count?: number; jobs?: RunJob[] }
+      const batch = j.jobs ?? []
+      out.push(...batch.map(reduceJob))
+      if (batch.length === 0 || out.length >= (j.total_count ?? 0)) return JSON.stringify(out)
+    }
+    throw new Error(`github: run ${runId} in ${repo} has more than ${maxPages * 100} jobs, more than 'maxPages' allows — failing rather than returning a truncated list that would read as complete`)
+  }
+
+  /**
+   * What a failed job left behind, as JSON `{job, failedStep, annotations, logTail, logNote}`.
+   *
+   *   · `failedStep`  the first step whose conclusion is `failure` ("" if none —
+   *                   which is also the lost-runner signature, see `lostRunnerVerdict`)
+   *   · `annotations` `[{level, title, message, path, line}]`, notices dropped,
+   *                   at most 10. Needs `checks: read`; without it this is `[]`
+   *                   and `logNote` says so.
+   *   · `logTail`     the last `tailLines` meaningful lines of the job log, with
+   *                   timestamps, ANSI colour and runner bookkeeping (`##[group]`,
+   *                   `Post …`, orphan cleanup) removed. `##[error]` lines stay:
+   *                   they are the runner's own summary of what broke.
+   *
+   * BEST-EFFORT PER PART. A job still running has no log yet (404), a
+   * `startup_failure` never has one, and logs expire. Each missing part is empty
+   * with a reason in `logNote`, and only a failure to read the JOB itself throws —
+   * a detail message with half its parts is worth posting, one with none is not.
+   *
+   * The log is downloaded with `-L` (the API answers 302 to blob storage; curl
+   * does not forward the Authorization header to another host) and only its last
+   * 256 KB leave the container, so a 50 MB log does not travel through stdout.
+   *
+   * @param cacheBust MUST vary per call. See the module header.
+   */
+  @func({ cache: "never" })
+  async jobFailure(token: Secret, repo: string, jobId: string, cacheBust: string, tailLines = 25): Promise<string> {
+    required(repo, "repo", "without it there is no job to read")
+    required(jobId, "jobId", "it identifies the failed job")
+    required(cacheBust, "cacheBust", "without it Dagger serves a cached exec and the detail is a previous job's")
+    const jr = await this.request(token, `${API}/repos/${repo}/actions/jobs/${jobId}`, cacheBust)
+    if (jr.status !== 200) {
+      throw new Error(`github: could not read job ${jobId} in ${repo} (HTTP ${jr.status}) — is 'actions: read' missing from permissions? Body: ${jr.body.slice(0, 400)}`)
+    }
+    const job = reduceJob(JSON.parse(jr.body) as RunJob)
+    const failedStep = (job.steps ?? []).find((st) => st.conclusion === "failure")?.name ?? ""
+    const notes: string[] = []
+
+    let annotations: { level: string; title: string; message: string; path: string; line: number }[] = []
+    const ar = await this.request(token, `${API}/repos/${repo}/check-runs/${jobId}/annotations?per_page=50`, cacheBust)
+    if (ar.status === 200) {
+      annotations = (JSON.parse(ar.body) as { annotation_level: string; title?: string; message: string; path?: string; start_line?: number }[])
+        .filter((a) => a.annotation_level !== "notice")
+        .slice(0, 10)
+        .map((a) => ({ level: a.annotation_level, title: a.title ?? "", message: (a.message ?? "").slice(0, 1000), path: a.path ?? "", line: a.start_line ?? 0 }))
+    } else {
+      notes.push(`annotations unavailable (HTTP ${ar.status}${ar.status === 403 || ar.status === 404 ? " — is 'checks: read' missing?" : ""})`)
+    }
+
+    let logTail = ""
+    const lr = await this.request(token, `${API}/repos/${repo}/actions/jobs/${jobId}/logs`, cacheBust, "GET", "", 256_000)
+    if (lr.status === 200) {
+      logTail = cleanLogTail(lr.body, tailLines)
+    } else {
+      notes.push(`log unavailable (HTTP ${lr.status}${job.status !== "completed" ? " — the job has not finished, logs are published at completion" : ""})`)
+    }
+    return JSON.stringify({ job, failedStep, annotations, logTail, logNote: notes.join("; ") })
+  }
+
+  /**
+   * Durations of recent SUCCESSFUL runs of a workflow, newest first, as JSON
+   * `[{id, attempt, ms}]` — what a card compares the current wall clock against.
+   *
+   * `ms` is `updated_at − run_started_at` of the latest attempt. That is the
+   * run's wall clock including queueing, which is what a person waiting for it
+   * experiences. A run whose timestamps do not parse is dropped, not zeroed: a
+   * zero would drag the median down and make every run look slow.
+   *
+   * @param workflowFile the workflow's file name (`pipeline.yml`) or its numeric id.
+   * @param branch       only runs on this branch; empty for all branches.
+   * @param n            how many runs to read (1..100).
+   * @param cacheBust    MUST vary per call.
+   */
+  @func({ cache: "never" })
+  async workflowRunDurations(
+    token: Secret, repo: string, workflowFile: string, branch: string, n: number, cacheBust: string,
+  ): Promise<string> {
+    required(repo, "repo", "without it there are no runs to read")
+    required(workflowFile, "workflowFile", "it selects which workflow's history the run is compared against")
+    required(cacheBust, "cacheBust", "without it Dagger serves a cached exec and the median never moves")
+    const per = Math.max(1, Math.min(100, Math.floor(n)))
+    const q = `status=success&per_page=${per}${branch.trim() ? `&branch=${encodeURIComponent(branch.trim())}` : ""}`
+    const r = await this.request(token, `${API}/repos/${repo}/actions/workflows/${encodeURIComponent(workflowFile)}/runs?${q}`, cacheBust)
+    if (r.status !== 200) {
+      throw new Error(`github: could not list runs of workflow '${workflowFile}' in ${repo} (HTTP ${r.status}) — a 404 is a wrong file name as often as a missing 'actions: read'. Body: ${r.body.slice(0, 400)}`)
+    }
+    const runs = (JSON.parse(r.body) as { workflow_runs?: { id: number; run_attempt?: number; run_started_at?: string; updated_at?: string }[] }).workflow_runs ?? []
+    return JSON.stringify(runs
+      .map((w) => ({ id: w.id, attempt: w.run_attempt ?? 1, ms: Date.parse(w.updated_at ?? "") - Date.parse(w.run_started_at ?? "") }))
+      .filter((w) => Number.isFinite(w.ms) && w.ms > 0))
+  }
+
+  /**
+   * Clean a raw job log down to its last meaningful lines. Pure; public so the
+   * filter can be asserted on a fixture instead of on a real failure.
+   */
+  @func()
+  logTail(log: string, lines = 25): string {
+    return cleanLogTail(log, lines)
+  }
+
   // ── Internals ─────────────────────────────────────────────────────────────
 
   /**
@@ -785,7 +1005,7 @@ export class Github {
    * prints the status on the first line: `--fail` would discard exactly the
    * error body that says which permission is missing.
    */
-  private async request(token: Secret, url: string, cacheBust: string, method = "GET", bodyJson = ""): Promise<Response> {
+  private async request(token: Secret, url: string, cacheBust: string, method = "GET", bodyJson = "", tailBytes = 0): Promise<Response> {
     let c: Container = dag
       .container()
       .from(CURL_IMG)
@@ -801,13 +1021,19 @@ export class Github {
       c = c.withNewFile("/tmp/body.json", bodyJson)
       data = "--data @/tmp/body.json"
     }
+    // `tailBytes` > 0 is the raw-download mode (job logs): follow the redirect
+    // to blob storage and emit only the end of the file. curl drops the
+    // Authorization header when a redirect changes host, so the token does not
+    // travel to the storage account.
+    const follow = tailBytes > 0 ? "-L " : ""
+    const emit = tailBytes > 0 ? `tail -c ${Math.floor(tailBytes)} /tmp/out.json` : "cat /tmp/out.json"
     const script =
       `set -e; ` +
-      `code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X "$METHOD" ` +
+      `code=$(curl -sS ${follow}-o /tmp/out.json -w '%{http_code}' -X "$METHOD" ` +
       `-H "Authorization: Bearer $GH_TOK" ` +
       `-H 'Accept: application/vnd.github+json' ` +
       `-H 'X-GitHub-Api-Version: 2022-11-28' ${data} "$URL"); ` +
-      `printf '%s\\n' "$code"; cat /tmp/out.json`
+      `printf '%s\\n' "$code"; ${emit}`
     let out: string
     try {
       out = await c.withExec(["sh", "-c", script]).stdout()

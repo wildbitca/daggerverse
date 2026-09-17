@@ -1,0 +1,5 @@
+▶ Run actions/checkout@v7
+Syncing repository: wildbitca/example
+▶ Run scripts/pins.sh --github-env
+pin mismatch: node 24.20.0 != 24.19.0
+##[error]Process completed with exit code 1.

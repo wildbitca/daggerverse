@@ -1,0 +1,18 @@
+2026-09-16T18:42:49.3041710Z ##[group]Runner Image Provisioner
+2026-09-16T18:42:49.3041720Z Hosted Compute Agent
+2026-09-16T18:42:49.3051400Z ##[endgroup]
+2026-09-16T18:42:51.2662940Z ##[group]Run actions/checkout@v7
+2026-09-16T18:42:51.2662950Z with:
+2026-09-16T18:42:51.2662960Z ##[endgroup]
+2026-09-16T18:42:52.0000000Z Syncing repository: wildbitca/example
+2026-09-16T18:42:56.3725510Z ##[group]Run scripts/pins.sh --github-env
+2026-09-16T18:42:56.3764480Z env:
+2026-09-16T18:42:56.3764750Z   DAGGER_VERSION: 0.21.9
+2026-09-16T18:42:56.3767400Z ##[endgroup]
+2026-09-16T18:42:56.4000000Z [31mpin mismatch: node 24.20.0 != 24.19.0[0m
+2026-09-16T18:42:56.4183030Z ##[error]Process completed with exit code 1.
+2026-09-16T18:42:56.4316640Z ##[group]Run slack report (if: always())
+2026-09-16T18:42:56.4316650Z report output that is not the cause
+2026-09-16T18:42:56.4706040Z Post job cleanup.
+2026-09-16T18:42:56.5000000Z [command]/usr/bin/git config --local --unset-all http.extraheader
+2026-09-16T18:42:56.7753110Z Cleaning up orphan processes
