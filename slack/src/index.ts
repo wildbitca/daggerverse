@@ -132,6 +132,19 @@ function parse<T>(raw: string, what: string): T | undefined {
   }
 }
 
+/**
+ * The ref as a person reads it: `main`, `v1.2.3`, `PR #42`. The card used to print
+ * `refs/heads/main`, and linked a PR's merge ref to a tree page that does not exist.
+ */
+function shortRef(ref: string): string {
+  return (ref ?? "").replace(/^refs\/heads\//, "").replace(/^refs\/tags\//, "").replace(/^refs\/pull\/(\d+)\/merge$/, "PR #$1")
+}
+
+function refUrl(repoUrl: string, ref: string): string {
+  const pr = /^refs\/pull\/(\d+)\/merge$/.exec(ref ?? "")
+  return pr ? `${repoUrl}/pull/${pr[1]}` : `${repoUrl}/tree/${shortRef(ref)}`
+}
+
 function asStatus(s: string): Status {
   if (s === "running" || s === "waiting" || s === "ok" || s === "fail") return s
   throw new Error(`slack: status '${s}' is not one of running|waiting|ok|fail`)
@@ -229,7 +242,7 @@ export class Slack {
     const repoUrl = `${m.server}/${m.repo}`
     const fields = [
       { type: "mrkdwn", text: `*Repo:*\n<${repoUrl}|${m.repo || "?"}>` },
-      { type: "mrkdwn", text: `*Branch:*\n<${repoUrl}/tree/${m.ref}|\`${m.ref || "?"}\`>` },
+      { type: "mrkdwn", text: `*Branch:*\n<${refUrl(repoUrl, m.ref)}|\`${shortRef(m.ref) || "?"}\`>` },
       { type: "mrkdwn", text: `*Commit:*\n<${repoUrl}/commit/${m.sha}|\`${short}\`>${subject ? `  ${subject}` : ""}` },
       { type: "mrkdwn", text: `*Author:*\n<${m.server}/${m.actor}|${m.actor || "?"}>` },
     ]
@@ -245,7 +258,7 @@ export class Slack {
       },
     ]
     return JSON.stringify({
-      text: `${title} — ${label}  (${m.repo}@${m.ref})`,
+      text: `${title} — ${label}  (${m.repo}@${shortRef(m.ref)})`,
       attachments: [{ color: COLOR[st], blocks }],
       metadata: { event_type: eventType, event_payload: payload },
     })
@@ -263,14 +276,20 @@ export class Slack {
    * previous exec from cache and every run reads the same stale trend — a network
    * read cached is a network read that did not happen (Gotcha 2).
    *
+   * Only CLOSED cards (`ok` / `fail`) are a baseline. A `running` card is a run
+   * still in flight, and a `waiting` one stopped at an approval with a partial
+   * duration; comparing against either prints a confident, wrong delta.
+   *
+   * @param excludeRunId the caller's own run id, so a watcher resuming a run's
+   *   card after an approval never compares the run against itself.
    * Best-effort: returns "" on any failure. No trend is a missing line on a card;
    * a hard failure here would be a pipeline down because a chat app was slow.
    */
   @func({ cache: "never" })
-  async readTrend(token: Secret, channel: string, eventType: string, repo: string, cacheBust: string): Promise<string> {
+  async readTrend(token: Secret, channel: string, eventType: string, repo: string, cacheBust: string, excludeRunId = ""): Promise<string> {
     const script = `
 curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&include_all_metadata=true" -H "Authorization: Bearer $TOK" \\
- | jq -c --arg et "$EVENT_TYPE" --arg repo "$REPO" 'first((.messages // [])[] | select(.metadata.event_type == $et) | select(((.metadata.event_payload.repo) // "") == $repo) | .metadata.event_payload) // empty'
+ | jq -c --arg et "$EVENT_TYPE" --arg repo "$REPO" --arg ex "$EXCLUDE_RUN_ID" 'first((.messages // [])[] | select(.metadata.event_type == $et) | select(((.metadata.event_payload.repo) // "") == $repo) | select(((.metadata.event_payload.status) // "ok") as $s | $s == "ok" or $s == "fail") | select($ex == "" or (((.metadata.event_payload.run_id) // "") | tostring) != $ex) | .metadata.event_payload) // empty'
 `
     try {
       const out = await this.pollBase()
@@ -278,6 +297,7 @@ curl -sS "https://slack.com/api/conversations.history?channel=$CHANNEL&limit=40&
         .withEnvVariable("CHANNEL", channel)
         .withEnvVariable("EVENT_TYPE", eventType)
         .withEnvVariable("REPO", repo)
+        .withEnvVariable("EXCLUDE_RUN_ID", excludeRunId)
         .withEnvVariable("CACHE_BUST", cacheBust)
         .withExec(["sh", "-c", script])
         .stdout()

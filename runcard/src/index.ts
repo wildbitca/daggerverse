@@ -21,7 +21,9 @@
  * ── IT NEVER WAITS FOR A HUMAN ──────────────────────────────────────────────
  * When all that is left of a run is jobs parked on an environment approval,
  * `watch` renders them as "awaiting approval", closes the card as `waiting` and
- * EXITS. Polling an approval held a runner for up to thirty minutes and was
+ * EXITS. A second watcher job that `needs` the gated job and passes
+ * `resumeAfter` picks the same card up once the gate opens and carries it to
+ * its verdict, so a released run does not stay "awaiting approval" forever. Polling an approval held a runner for up to thirty minutes and was
  * retired on 2026-08-22 (ADR-0003 §2.3); approvals are the `deploy-gate` service's
  * job, and it threads its request under this card by the commit sha in the
  * card's metadata.
@@ -225,6 +227,11 @@ export class Runcard {
    *   (`ubuntu-latest` 0.006, `macos-*` 0.062). `*` globs are allowed.
    * @param githubToken needs `actions: read` and `checks: read` on `repo`.
    * @param slackToken omit the flag when there is no token; an empty one is treated the same.
+   * @param resumeAfter the exact `name:` of the watcher job that stopped at an
+   *   approval. Set it on a second watcher job that `needs` the gated job (with
+   *   `if: always()`): it edits that run's existing card instead of posting a
+   *   new one, and does not re-post failures the first watcher already threaded
+   *   (every job that failed before that watcher completed).
    */
   @func({ cache: "never" })
   async watch(
@@ -234,7 +241,7 @@ export class Runcard {
     githubToken: Secret, slackChannel: string,
     slackToken?: Secret,
     workflowFile = "", branch = "", msg = "", title = "", runnerPrices = "",
-    pollSeconds = 30, deadlineMinutes = 100,
+    pollSeconds = 30, deadlineMinutes = 100, resumeAfter = "",
   ): Promise<string> {
     if (!slackChannel.trim() || !(await present(slackToken))) return "skipped"
     const token = slackToken as Secret
@@ -249,14 +256,17 @@ export class Runcard {
     let polls = 0
     const bust = () => `${runId}:${runAttempt}:${++polls}:${Date.now()}`
 
-    const trend = await slack.readTrend(token, slackChannel, eventType, repo, bust())
+    const trend = await slack.readTrend(token, slackChannel, eventType, repo, bust(), { excludeRunId: runId })
     const t0 = Date.now()
     let runStart = t0
     const render = (status: string, items: Item[]) => slack.render(
       cardTitle, status, JSON.stringify(meta), JSON.stringify(items), Math.max(0, Date.now() - runStart), eventType, { metrics: "", trend },
     )
     let items: Item[] = defs.map((d) => ({ name: d.row, st: "pending" }))
-    let ts = await slack.post(token, slackChannel, await render("running", items))
+    // Resuming: the card is the one the first watcher left `waiting`. Only when it
+    // cannot be found (that watcher was skipped, or Slack lost it) is a new one posted.
+    let ts = resumeAfter.trim() ? await this.cardTs(slackChannel, eventType, runId, token, runAttempt, 30) : ""
+    if (!ts) ts = await slack.post(token, slackChannel, await render("running", items))
 
     const reported = new Set<number>()
     const deadline = t0 + deadlineMinutes * 60_000
@@ -288,6 +298,17 @@ export class Runcard {
             await slack.threadReply(token, slackChannel, ts, `runcard misconfigured: selfJob '${selfJob}' matches no job of this run (${names}).`)
             await slack.post(token, slackChannel, await render("fail", items.map((i) => ({ ...i, note: "watcher misconfigured" }))), { ts })
             throw new Error(`runcard: selfJob '${selfJob}' matches no job in run ${runId} (jobs: ${names}) — the watcher would wait on itself until the deadline`)
+          }
+          if (resumeAfter.trim()) {
+            const prior = all.find((j) => isNamed(j.name, resumeAfter.trim()))
+            if (!prior) {
+              throw new Error(`runcard: resumeAfter '${resumeAfter}' matches no job in run ${runId} (jobs: ${all.map((j) => j.name).join(", ")})`)
+            }
+            // The first watcher threaded every failure that completed before it did.
+            const cutoff = Date.parse(prior.completed_at ?? "") || Date.now()
+            for (const j of all) {
+              if (j.id && j.status === "completed" && BAD.includes(j.conclusion ?? "") && (Date.parse(j.completed_at ?? "") || 0) <= cutoff) reported.add(j.id)
+            }
           }
           const self = all.find((j) => isNamed(j.name, selfJob))
           // The run's start is the earliest job creation the API reports; it

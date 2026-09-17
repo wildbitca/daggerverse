@@ -111,8 +111,22 @@ does **not** filter on `event_type` or `run_id`. Consequences:
   receives contains the run id.
 - If a gated job has no `needs` and the webhook arrives before the watcher posts (module
   load takes ~1–2 min on a cold runner), the request goes to the channel unthreaded.
-- The card is not rewritten after approval: it stays `waiting` ("awaiting approval" /
-  "after approval"). The verdict lives in the thread, posted by deploy-gate.
+- A card closed as `waiting` is picked up again by a second watcher job placed after
+  the gate (`runcard/v0.1.1`+). Without one it stays `waiting` and the verdict lives only
+  in the thread:
+
+```yaml
+slack-card-release:
+  name: Slack — release card
+  needs: [deploy-prod]            # the approval-gated job
+  if: always() && startsWith(github.ref, 'refs/tags/')
+  continue-on-error: true
+  # same call as the first watcher, plus:
+  #   --self-job="Slack — release card" --resume-after="Slack — live card"
+```
+
+  It edits the same card (found by `event_type` + `run_id` + `run_attempt`), skips the
+  failures the first watcher already threaded, and exits again at a further gate.
 
 ## Versioning
 
