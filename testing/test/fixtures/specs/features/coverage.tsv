@@ -1,0 +1,12 @@
+# Fixture map for testing.features: every row kind the format has.
+flow	features	note
+login_otp	auth	email OTP sign-in
+like	likes	like, persisted
+adopt_button	adoption	the adopt CTA
+scroll_feed	feed	the pager
+record_smoke	-	harness smoke, not a product feature
+
+path:test/core/	-	shared core tests belong to no feature
+UNCOVERED	lost-pet	unit tests only
+UNCOVERED	not-found-404	web surface
+# chat is deliberately undeclared: the mapper must report it.

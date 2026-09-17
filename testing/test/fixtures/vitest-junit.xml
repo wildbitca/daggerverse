@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="7" failures="1" errors="0" time="0.14678557">
+    <testsuite name="test/routes/health.test.ts" timestamp="2026-09-17T16:00:49.143Z" hostname="runner" tests="1" failures="0" errors="0" skipped="0" time="0.093671136">
+        <testcase classname="test/routes/health.test.ts" name="health ok" time="0.0921601">
+        </testcase>
+    </testsuite>
+    <testsuite name="test/features/lost_pet/sighting.test.ts" timestamp="2026-09-17T16:00:49.145Z" hostname="runner" tests="6" failures="1" errors="0" skipped="2" time="0.053114434">
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; adds" time="0.00171547">
+        </testcase>
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; compares" time="0.04870559">
+            <failure message="expected 2 to be 3 // Object.is equality" type="AssertionError">
+AssertionError: expected 2 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 2
+
+ ❯ test/features/lost_pet/sighting.test.ts:6:95
+            </failure>
+        </testcase>
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; is skipped" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; is todo" time="0">
+            <skipped/>
+        </testcase>
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; flaky once" time="0.000855402">
+        </testcase>
+        <testcase classname="test/features/lost_pet/sighting.test.ts" name="sighting &gt; clamps low" time="0.000187525">
+        </testcase>
+    </testsuite>
+</testsuites>

@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- The retry of the one red flow in maestro-junit.xml, as a second `maestro test` would write it. -->
+<testsuites>
+  <testsuite name="Test Suite" device="emulator-5554" tests="1" failures="0" time="58.1" timestamp="2026-09-17T10:05:00">
+    <testcase id="Like a post" name="Like a post" classname="Like a post" file="test/e2e/android/like.yaml" time="58.1" timestamp="2026-09-17T10:05:01" status="SUCCESS">
+      <properties>
+        <property name="tags" value="like"/>
+      </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

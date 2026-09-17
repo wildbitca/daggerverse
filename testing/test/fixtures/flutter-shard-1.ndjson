@@ -1,0 +1,13 @@
+{"protocolVersion":"0.1.1","runnerVersion":"1.32.0","pid":4022192,"type":"start","time":0}
+{"suite":{"id":0,"platform":"vm","path":"test/core/clock_test.dart"},"type":"suite","time":0}
+{"test":{"id":1,"name":"loading test/core/clock_test.dart","suiteID":0,"groupIDs":[],"metadata":{"skip":false,"skipReason":null},"line":null,"column":null,"url":null},"type":"testStart","time":2}
+{"count":1,"time":14,"type":"allSuites"}
+{"testID":1,"result":"success","skipped":false,"hidden":true,"type":"testDone","time":363}
+{"group":{"id":2,"suiteID":0,"parentID":null,"name":"","metadata":{"skip":false,"skipReason":null},"testCount":2,"line":null,"column":null,"url":null},"type":"group","time":366}
+{"group":{"id":3,"suiteID":0,"parentID":2,"name":"clock","metadata":{"skip":false,"skipReason":null},"testCount":2,"line":4,"column":3,"url":"file:///tmp/dprobe/test/core/clock_test.dart"},"type":"group","time":367}
+{"test":{"id":4,"name":"clock throws","suiteID":0,"groupIDs":[2,3],"metadata":{"skip":false,"skipReason":null},"line":5,"column":5,"url":"file:///tmp/dprobe/test/core/clock_test.dart"},"type":"testStart","time":367}
+{"testID":4,"error":"Bad state: boom","stackTrace":"test/core/clock_test.dart 6:7  main.<fn>.<fn>\n","isFailure":false,"type":"error","time":384}
+{"testID":4,"result":"error","skipped":false,"hidden":false,"type":"testDone","time":385}
+{"test":{"id":5,"name":"clock ticks","suiteID":0,"groupIDs":[2,3],"metadata":{"skip":false,"skipReason":null},"line":8,"column":5,"url":"file:///tmp/dprobe/test/core/clock_test.dart"},"type":"testStart","time":385}
+{"testID":5,"result":"success","skipped":false,"hidden":false,"type":"testDone","time":508}
+{"success":false,"type":"done","time":515}

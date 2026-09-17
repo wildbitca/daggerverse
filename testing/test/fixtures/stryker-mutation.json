@@ -1,0 +1,252 @@
+{
+  "schemaVersion": "1.0",
+  "thresholds": {
+    "high": 90,
+    "low": 70,
+    "break": null
+  },
+  "projectRoot": "/tmp/project",
+  "files": {
+    "src/lib/alpha.ts": {
+      "language": "typescript",
+      "source": "(source elided in fixture)",
+      "mutants": [
+        {
+          "id": "0",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 95
+            },
+            "start": {
+              "column": 46,
+              "line": 88
+            }
+          }
+        },
+        {
+          "id": "14",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 134
+            },
+            "start": {
+              "column": 99,
+              "line": 102
+            }
+          }
+        },
+        {
+          "id": "15",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 4,
+              "line": 124
+            },
+            "start": {
+              "column": 7,
+              "line": 103
+            }
+          }
+        },
+        {
+          "id": "16",
+          "mutatorName": "ArrowFunction",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 47,
+              "line": 116
+            },
+            "start": {
+              "column": 7,
+              "line": 116
+            }
+          }
+        },
+        {
+          "id": "20",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 14,
+              "line": 120
+            },
+            "start": {
+              "column": 9,
+              "line": 120
+            }
+          }
+        },
+        {
+          "id": "3",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "{}",
+          "status": "Survived",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 57,
+              "line": 90
+            },
+            "start": {
+              "column": 7,
+              "line": 90
+            }
+          }
+        },
+        {
+          "id": "4",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "{}",
+          "status": "Survived",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 57,
+              "line": 90
+            },
+            "start": {
+              "column": 7,
+              "line": 90
+            }
+          }
+        },
+        {
+          "id": "5",
+          "mutatorName": "LogicalOperator",
+          "replacement": "{}",
+          "status": "Survived",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 57,
+              "line": 90
+            },
+            "start": {
+              "column": 7,
+              "line": 90
+            }
+          }
+        },
+        {
+          "id": "39",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "NoCoverage",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 200
+            },
+            "start": {
+              "column": 28,
+              "line": 150
+            }
+          }
+        },
+        {
+          "id": "40",
+          "mutatorName": "LogicalOperator",
+          "replacement": "{}",
+          "status": "NoCoverage",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 54,
+              "line": 151
+            },
+            "start": {
+              "column": 31,
+              "line": 151
+            }
+          }
+        }
+      ]
+    },
+    "src/lib/beta.ts": {
+      "language": "typescript",
+      "source": "(source elided in fixture)",
+      "mutants": [
+        {
+          "id": "636",
+          "mutatorName": "ConditionalExpression",
+          "replacement": "{}",
+          "status": "Timeout",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 24,
+              "line": 189
+            },
+            "start": {
+              "column": 5,
+              "line": 189
+            }
+          }
+        },
+        {
+          "id": "630",
+          "mutatorName": "BlockStatement",
+          "replacement": "{}",
+          "status": "Killed",
+          "static": false,
+          "coveredBy": [],
+          "killedBy": [],
+          "location": {
+            "end": {
+              "column": 2,
+              "line": 191
+            },
+            "start": {
+              "column": 89,
+              "line": 186
+            }
+          }
+        }
+      ]
+    }
+  },
+  "testFiles": {}
+}

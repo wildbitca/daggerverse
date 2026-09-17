@@ -1,0 +1,3 @@
+{"total": {"lines":{"total":4,"covered":2,"skipped":0,"pct":50},"statements":{"total":6,"covered":3,"skipped":0,"pct":50},"functions":{"total":2,"covered":2,"skipped":0,"pct":100},"branches":{"total":4,"covered":1,"skipped":0,"pct":25},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
+,"/tmp/vprobe/src/lib/math.ts": {"lines":{"total":4,"covered":2,"skipped":0,"pct":50},"functions":{"total":2,"covered":2,"skipped":0,"pct":100},"statements":{"total":6,"covered":3,"skipped":0,"pct":50},"branches":{"total":4,"covered":1,"skipped":0,"pct":25}}
+}

@@ -1,0 +1,670 @@
+[
+  {
+    "name": "flutter-full",
+    "why": "flutter NDJSON (real, package:test 1.32.0): 3 passed incl. 1 flaky retry, 2 red, 1 skip, durations from event times",
+    "fn": "flutter-report",
+    "args": {
+      "report": "@flutter-machine.ndjson",
+      "lane": "unit",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals": {
+        "passed": 3,
+        "failed": 2,
+        "skipped": 1,
+        "flaky": 1,
+        "durationMs": 1110
+      },
+      ".suites | length": 2,
+      ".flakyTests | map(.name)": [
+        "flaky once"
+      ],
+      ".failures | map([.name, .declLine, .failLine, .kind])": [
+        [
+          "clock throws",
+          5,
+          6,
+          "error"
+        ],
+        [
+          "compares two strings",
+          8,
+          10,
+          "failure"
+        ]
+      ],
+      ".slowest[0].name": "clock ticks"
+    }
+  },
+  {
+    "name": "flutter-shard-1",
+    "why": "shard 1 of the same suite (test/core only)",
+    "fn": "flutter-report",
+    "args": {
+      "report": "@flutter-shard-1.ndjson",
+      "lane": "unit",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        1,
+        1,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "name": "flutter-shard-2",
+    "why": "shard 2 of the same suite (test/features only)",
+    "fn": "flutter-report",
+    "args": {
+      "report": "@flutter-shard-2.ndjson",
+      "lane": "unit",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        2,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  {
+    "name": "merge-shards",
+    "why": "two shards of one lane sum to exactly what the unsharded run reports",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=flutter-shard-1",
+        "=flutter-shard-2"
+      ]
+    },
+    "expect": {
+      ".lane": "unit",
+      ".runner": "flutter",
+      ".exitCode": "1",
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        3,
+        2,
+        1,
+        1
+      ],
+      ".suites | map(.file) | sort": [
+        "test/core/clock_test.dart",
+        "test/features/lost_pet/sighting_test.dart"
+      ],
+      ".failures | length": 2,
+      "has(\"lanes\")": false
+    }
+  },
+  {
+    "name": "flutter-crash",
+    "why": "a suite that died before its first test must not read as a green zero",
+    "fn": "flutter-report",
+    "args": {
+      "report": "",
+      "lane": "unit",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals.failed": 1,
+      ".failures[0].name": "(the suite did not survive)"
+    }
+  },
+  {
+    "name": "vitest",
+    "why": "vitest JSON (real, 4.1.11): retry pass is flaky, todo counts as skip, failLine from the stack",
+    "fn": "vitest-report",
+    "args": {
+      "report": "@vitest.json",
+      "lane": "unit",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals": {
+        "passed": 4,
+        "failed": 1,
+        "skipped": 2,
+        "flaky": 1,
+        "durationMs": 257
+      },
+      ".flakyTests | map(.name)": [
+        "sighting flaky once"
+      ],
+      ".failures | map([.name, .failLine, .failCol, .kind])": [
+        [
+          "sighting compares",
+          6,
+          95,
+          "failure"
+        ]
+      ],
+      ".suites | map([.file, .pass, .fail, .skip])": [
+        [
+          "test/routes/health.test.ts",
+          1,
+          0,
+          0
+        ],
+        [
+          "test/features/lost_pet/sighting.test.ts",
+          3,
+          1,
+          2
+        ]
+      ]
+    }
+  },
+  {
+    "name": "vitest-junit",
+    "why": "vitest's junit reporter (real) as a unit suite: same counts as its JSON, minus flaky (junit has no retry trace)",
+    "fn": "junit-report",
+    "args": {
+      "report": "@vitest-junit.xml",
+      "lane": "unit",
+      "runner": "vitest",
+      "as-scenarios": "false"
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        4,
+        1,
+        2,
+        0
+      ],
+      ".failures | map([.name, .failLine])": [
+        [
+          "sighting > compares",
+          6
+        ]
+      ],
+      "has(\"scenarios\")": false
+    }
+  },
+  {
+    "name": "maestro",
+    "why": "Maestro junit (v2.10.0 golden-test shape): WARNING passes, ERROR fails, id is the flow file basename, tags split",
+    "fn": "junit-report",
+    "args": {
+      "report": "@maestro-junit.xml",
+      "lane": "e2e",
+      "runner": "maestro",
+      "exit-code": "1"
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        4,
+        1,
+        0,
+        0
+      ],
+      ".scenarios | map([.id, .status])": [
+        [
+          "login_otp",
+          "pass"
+        ],
+        [
+          "like",
+          "fail"
+        ],
+        [
+          "adopt_button",
+          "pass"
+        ],
+        [
+          "scroll_feed",
+          "pass"
+        ],
+        [
+          "record_smoke",
+          "pass"
+        ]
+      ],
+      ".scenarios[0].tags": [
+        "auth",
+        "smoke"
+      ],
+      ".failures[0].message": "Element not found: Id matching regex: like_button_0"
+    }
+  },
+  {
+    "name": "maestro-retry",
+    "why": "the retry run of the red flow",
+    "fn": "junit-report",
+    "args": {
+      "report": "@maestro-junit-retry.xml",
+      "lane": "e2e",
+      "runner": "maestro"
+    },
+    "expect": {
+      ".totals.passed": 1
+    }
+  },
+  {
+    "name": "merge-retry",
+    "why": "a flow red in one file and green on its retry in another is 1 passed + 1 flaky, not a failure",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=maestro",
+        "=maestro-retry"
+      ]
+    },
+    "expect": {
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        5,
+        0,
+        0,
+        1
+      ],
+      ".scenarios | map(select(.id == \"like\"))[0] | [.status, .attempts]": [
+        "pass",
+        2
+      ],
+      ".failures": [],
+      ".flakyTests | map(.name)": [
+        "Like a post"
+      ],
+      ".suites | map(select(.file == \"test/e2e/android/like.yaml\")) | map([.pass, .fail])": [
+        [
+          1,
+          0
+        ]
+      ],
+      ".suites | length": 5
+    }
+  },
+  {
+    "name": "stryker",
+    "why": "Stryker mutation.json (a real nightly artifact, trimmed and anonymised): score = (killed+timeout)/(killed+timeout+survived+noCoverage)",
+    "fn": "stryker-report",
+    "args": {
+      "report": "@stryker-mutation.json",
+      "lane": "mutation"
+    },
+    "expect": {
+      ".mutation": {
+        "score": 58.33,
+        "survived": 3,
+        "noCoverage": 2,
+        "killed": 6,
+        "timeout": 1
+      }
+    }
+  },
+  {
+    "name": "lcov",
+    "why": "lcov (real, v8 via vitest): 2/4 lines, 1/4 branches",
+    "fn": "lcov-report",
+    "args": {
+      "report": "@lcov.info",
+      "lane": "unit"
+    },
+    "expect": {
+      ".coverage": {
+        "lines": 50,
+        "source": "lcov",
+        "linesFound": 4,
+        "linesHit": 2,
+        "branches": 25
+      }
+    }
+  },
+  {
+    "name": "lcov-union",
+    "why": "two shards' tracefiles concatenated: a line hit by either counts once (second tracefile hand-written to hit line 7 and one branch)",
+    "fn": "lcov-report",
+    "args": {
+      "report": "@lcov.info+lcov-shard-2.info",
+      "lane": "unit"
+    },
+    "expect": {
+      ".coverage": {
+        "lines": 75,
+        "source": "lcov",
+        "linesFound": 4,
+        "linesHit": 3,
+        "branches": 50
+      }
+    }
+  },
+  {
+    "name": "istanbul",
+    "why": "istanbul coverage-summary.json (real, same probe as lcov): must agree with the lcov numbers",
+    "fn": "istanbul-report",
+    "args": {
+      "report": "@coverage-summary.json",
+      "lane": "unit"
+    },
+    "expect": {
+      ".coverage": {
+        "lines": 50,
+        "source": "istanbul-summary",
+        "linesFound": 4,
+        "linesHit": 2,
+        "branches": 25
+      }
+    }
+  },
+  {
+    "name": "with-perf",
+    "why": "perf is attached, not judged",
+    "fn": "with-perf",
+    "args": {
+      "report": "=lcov",
+      "perf": "[{\"name\":\"cold start\",\"value\":2100,\"unit\":\"ms\",\"baseline\":1900,\"budget\":2000}]"
+    },
+    "expect": {
+      ".perf | length": 1,
+      ".coverage.lines": 50
+    }
+  },
+  {
+    "name": "merge-lanes",
+    "why": "unit shards + unit coverage + e2e + mutation: combined top line, each lane kept, attachments set neither runner nor exit code",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=merge-shards",
+        "=with-perf",
+        "=merge-retry",
+        "=stryker"
+      ]
+    },
+    "expect": {
+      ".lane": "unit+e2e+mutation",
+      ".runner": "flutter+maestro",
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        8,
+        2,
+        1,
+        2
+      ],
+      ".lanes | map([.lane, .totals.passed, .totals.failed])": [
+        [
+          "unit",
+          3,
+          2
+        ],
+        [
+          "e2e",
+          5,
+          0
+        ],
+        [
+          "mutation",
+          0,
+          0
+        ]
+      ],
+      ".lanes[0].coverage.lines": 50,
+      ".mutation.score": 58.33,
+      ".coverage.lines": 50,
+      ".perf | length": 1,
+      ".scenarios | length": 5,
+      ".suites | map(.lane) | unique": [
+        "e2e",
+        "unit"
+      ]
+    }
+  },
+  {
+    "name": "merge-idempotent",
+    "why": "merging an already-merged report changes nothing: lanes and per-lane suites survive",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=merge-lanes"
+      ]
+    },
+    "expect": {
+      ".lane": "unit+e2e+mutation",
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        8,
+        2,
+        1,
+        2
+      ],
+      ".lanes | map([.lane, .totals.passed, .totals.failed])": [
+        [
+          "unit",
+          3,
+          2
+        ],
+        [
+          "e2e",
+          5,
+          0
+        ],
+        [
+          "mutation",
+          0,
+          0
+        ]
+      ],
+      ".suites | map(.lane) | unique": [
+        "e2e",
+        "unit"
+      ]
+    }
+  },
+  {
+    "name": "merge-merged-plus-lane",
+    "why": "a merged report plus another unit report folds into the existing unit lane",
+    "fn": "merge",
+    "args": {
+      "reports": [
+        "=merge-lanes",
+        "=vitest"
+      ]
+    },
+    "expect": {
+      ".lane": "unit+e2e+mutation",
+      ".totals | [.passed, .failed, .skipped, .flaky]": [
+        12,
+        3,
+        3,
+        3
+      ],
+      ".lanes | map([.lane, .runner, .totals.passed, .totals.failed])": [
+        [
+          "unit",
+          "flutter+vitest",
+          7,
+          3
+        ],
+        [
+          "e2e",
+          "maestro",
+          5,
+          0
+        ],
+        [
+          "mutation",
+          "stryker",
+          0,
+          0
+        ]
+      ]
+    }
+  },
+  {
+    "name": "feature-map",
+    "why": "decision 1: path segment for unit tests, declared rows for flows, drift reported (chat is undeclared)",
+    "fn": "feature-map",
+    "args": {
+      "report": "=merge-lanes",
+      "feature-ids": "[\"adoption\",\"auth\",\"chat\",\"feed\",\"likes\",\"lost-pet\",\"not-found-404\"]",
+      "map": "@specs/features/coverage.tsv"
+    },
+    "expect": {
+      ".ok": false,
+      ".undeclaredFeatures": [
+        "chat"
+      ],
+      ".unknownFeatures": [],
+      ".unmappedScenarios": [],
+      ".unassignedTests": [],
+      ".report.features | map([.id, .tests, .scenarios, .failed, .covered, .e2e])": [
+        [
+          "adoption",
+          0,
+          1,
+          0,
+          true,
+          "flow"
+        ],
+        [
+          "auth",
+          0,
+          1,
+          0,
+          true,
+          "flow"
+        ],
+        [
+          "chat",
+          0,
+          0,
+          0,
+          false,
+          "undeclared"
+        ],
+        [
+          "feed",
+          0,
+          1,
+          0,
+          true,
+          "flow"
+        ],
+        [
+          "likes",
+          0,
+          1,
+          0,
+          true,
+          "flow"
+        ],
+        [
+          "lost-pet",
+          3,
+          0,
+          1,
+          true,
+          "uncovered"
+        ],
+        [
+          "not-found-404",
+          0,
+          0,
+          0,
+          false,
+          "uncovered"
+        ]
+      ]
+    }
+  },
+  {
+    "name": "feature-map-drift",
+    "why": "a test directory with no spec, and a scenario with no row, are problems; a fuzzy name never matches",
+    "fn": "feature-map",
+    "args": {
+      "report": "=merge-lanes",
+      "feature-ids": "[\"adoption\",\"auth\",\"feed\",\"like\",\"not-found-404\"]",
+      "map": "flow\tfeatures\nlogin_otp\tauth\nadopt_button\tadoption\nscroll_feed\tfeed\nrecord_smoke\t-\nUNCOVERED\tnot-found-404\nUNCOVERED\tlike\n"
+    },
+    "expect": {
+      ".ok": false,
+      ".unmappedScenarios": [
+        "like"
+      ],
+      ".unknownFeatures": [
+        "lost-pet (from test/features/lost_pet/sighting_test.dart)"
+      ],
+      ".unassignedTests": [
+        "test/core/clock_test.dart"
+      ],
+      ".report.features | map(select(.id == \"like\"))[0].scenarios": 0
+    }
+  },
+  {
+    "name": "features-dir",
+    "why": "the Directory form reads subdirectories and .md files as features and coverage.tsv as the map",
+    "fn": "features",
+    "args": {
+      "report": "=merge-lanes",
+      "specs-dir": "dir:specs/features"
+    },
+    "expect": {
+      ".report.features | map(.id)": [
+        "adoption",
+        "auth",
+        "chat",
+        "feed",
+        "likes",
+        "lost-pet",
+        "not-found-404"
+      ],
+      ".undeclaredFeatures": [
+        "chat"
+      ]
+    }
+  },
+  {
+    "name": "to-metrics",
+    "why": "the legacy TestMetrics view keeps total = passed + failed",
+    "fn": "to-metrics",
+    "args": {
+      "report": "=merge-shards"
+    },
+    "expect": {
+      ".": {
+        "total": 5,
+        "passed": 3,
+        "failed": 2,
+        "skipped": 1,
+        "suites": 2,
+        "perFile": [
+          {
+            "file": "test/core/clock_test.dart",
+            "pass": 1,
+            "fail": 1
+          },
+          {
+            "file": "test/features/lost_pet/sighting_test.dart",
+            "pass": 2,
+            "fail": 1
+          }
+        ],
+        "failedNames": [
+          "clock throws",
+          "compares two strings"
+        ]
+      }
+    }
+  },
+  {
+    "name": "summary",
+    "why": "the step summary names lanes, failures, features and report-only numbers",
+    "fn": "summary-markdown",
+    "args": {
+      "reports": [
+        "=feature-map.report"
+      ]
+    },
+    "raw": true,
+    "contains": [
+      "### 🧪 Tests — unit+e2e+mutation",
+      "| e2e | maestro | 5 | 0 |",
+      "⚠️ undeclared",
+      "58.33%",
+      "over budget, report-only",
+      "`test/core/clock_test.dart:6`"
+    ]
+  }
+]

@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Shape copied from Maestro v2.10.0's own golden test (maestro-cli JUnitTestSuiteReporterTest.kt),
+     with pacha/app flow names. Not captured from a device run. -->
+<testsuites>
+  <testsuite name="Test Suite" device="emulator-5554" tests="5" failures="1" time="212.4" timestamp="2026-09-17T10:00:00">
+    <testcase id="Login with OTP" name="Login with OTP" classname="Login with OTP" file="test/e2e/android/login_otp.yaml" time="41.2" timestamp="2026-09-17T10:00:01" status="SUCCESS">
+      <properties>
+        <property name="tags" value="auth, smoke"/>
+      </properties>
+    </testcase>
+    <testcase id="Like a post" name="Like a post" classname="Like a post" file="test/e2e/android/like.yaml" time="63.9" timestamp="2026-09-17T10:00:43" status="ERROR">
+      <properties>
+        <property name="tags" value="like"/>
+      </properties>
+      <failure>Element not found: Id matching regex: like_button_0</failure>
+    </testcase>
+    <testcase id="Adopt button" name="Adopt button" classname="Adopt button" file="test/e2e/android/adopt_button.yaml" time="30.0" timestamp="2026-09-17T10:01:47" status="SUCCESS">
+      <properties>
+        <property name="tags" value="adopt"/>
+      </properties>
+    </testcase>
+    <testcase id="Scroll feed" name="Scroll feed" classname="Scroll feed" file="test/e2e/android/scroll_feed.yaml" time="52.3" timestamp="2026-09-17T10:02:17" status="WARNING"/>
+    <testcase id="record_smoke" name="record_smoke" classname="record_smoke" file="test/e2e/android/record_smoke.yaml" time="25.0" timestamp="2026-09-17T10:03:10" status="SUCCESS"/>
+  </testsuite>
+</testsuites>
