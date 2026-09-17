@@ -37,7 +37,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       # Full history: gitleaks reads every commit, not just HEAD. Without this the
       # checkout is shallow and the gate passes without looking at anything — the
@@ -132,6 +132,83 @@ jobs:
       # approval-only, startup_failure, and a prefix collision resolved by exact mode.
       - name: runcard row fixtures
         run: runcard/test/run-fixtures.sh
+
+      # Every TestReport parser, merge rule and the feature mapper, on real report samples
+      # (flutter/dart, vitest JSON + junit, lcov, istanbul, Stryker) plus Maestro's
+      # golden-test JUnit shape. Each case states what it protects in `why`.
+      - name: testing report fixtures
+        run: test/run-cases.sh testing
+
+      # The card line, the flat trend keys and the thread sections a TestReport adds.
+      - name: slack report fixtures
+        run: test/run-cases.sh slack
+
+      # Additive means additive: a caller that passes only `metrics` must get the card
+      # the previous release rendered, byte for byte. Compared against the newest
+      # published slack tag, from this checkout's full history.
+      - name: slack.render is byte-identical to the last release without a report
+        run: |
+          set -euo pipefail
+          prev="$(git tag --list 'slack/v*' --sort=-v:refname | head -1)"
+          [ -n "$prev" ] || { echo "::error title=No slack tag::cannot find a published slack tag to compare against"; exit 1; }
+          git worktree add --detach "$RUNNER_TEMP/slack-prev" "$prev" >/dev/null
+          args=(render --title=probe --status=fail --event-type=probe_card --elapsed-ms=61000
+            --meta='{"repo":"o/r","ref":"refs/pull/4/merge","sha":"abc1234def","actor":"a","event":"push","runId":"1","runNumber":"2","server":"https://github.com","msg":"m","runAttempt":"2"}'
+            --items='[{"name":"unit","st":"fail","ms":3000,"note":"x"},{"name":"b","st":"ok"}]'
+            --metrics='{"total":5,"passed":4,"failed":1,"skipped":2,"suites":1,"perFile":[],"failedNames":["x"]}'
+            --trend='{"total_ms":50000,"scenarios":3,"passed":3,"failed":0,"gates_ok":1,"gates_total":1}')
+          old="$(dagger --progress plain -m "$RUNNER_TEMP/slack-prev/slack" call "${args[@]}")"
+          new="$(dagger --progress plain -m ./slack call "${args[@]}")"
+          [ -n "$old" ] || { echo "::error title=Empty render::$prev rendered nothing"; exit 1; }
+          if [ "$old" != "$new" ]; then
+            diff <(jq -S . <<<"$old") <(jq -S . <<<"$new") || true
+            echo "::error title=slack.render changed for metrics-only callers::output differs from $prev"
+            exit 1
+          fi
+          echo "identical to $prev"
+
+      # The cross-job handoff, live: this job uploads two reports as artifacts the way a
+      # test job would, and `runcard.runReports` reads them back through the API for THIS
+      # run and merges them. Anything served from cache or from another run would not
+      # contain this run's id, which the probe stamps into the lane name.
+      - name: Build report artifacts for the handoff probe
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/reports/unit" "$RUNNER_TEMP/reports/e2e"
+          f=testing/test/fixtures
+          { dagger --progress plain -m ./testing call flutter-report --report="$(cat $f/flutter-machine.ndjson)" --lane="unit-${{ github.run_id }}" --exit-code=1; echo; } > "$RUNNER_TEMP/reports/unit/test-report.json"
+          { dagger --progress plain -m ./testing call junit-report --report="$(cat $f/maestro-junit.xml)" --lane=e2e --runner=maestro --exit-code=1; echo; } > "$RUNNER_TEMP/reports/e2e/test-report.json"
+          jq -c .totals "$RUNNER_TEMP"/reports/*/test-report.json
+
+      - name: Upload report artifact (unit)
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-probe-unit
+          path: ${{ runner.temp }}/reports/unit/test-report.json
+          overwrite: true
+          retention-days: 1
+
+      - name: Upload report artifact (e2e)
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-probe-e2e
+          path: ${{ runner.temp }}/reports/e2e/test-report.json
+          overwrite: true
+          retention-days: 1
+
+      - name: Probe runcard.runReports against this run's artifacts
+        env:
+          GH_API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$(dagger --progress plain -m ./runcard call run-reports \
+            --github-token=env:GH_API_TOKEN --repo="${{ github.repository }}" --run-id="${{ github.run_id }}" \
+            --cache-bust="${{ github.run_id }}-${{ github.run_attempt }}-$(date +%s%N)" \
+            --report-artifacts=test-report-probe- --specs=testing/test/fixtures/specs/features)"
+          jq -c '{notes, totals: (.report | fromjson | .totals), lanes: (.report | fromjson | [.lanes[].lane])}' <<<"$out"
+          want='{"lanes":["e2e","unit-${{ github.run_id }}"],"totals":[7,3,1,1]}'
+          got="$(jq -cS '{lanes: (.report | fromjson | [.lanes[].lane] | sort), totals: (.report | fromjson | .totals | [.passed, .failed, .skipped, .flaky])}' <<<"$out")"
+          [ "$got" = "$(jq -cS . <<<"$want")" ] || { echo "::error title=Report handoff broken::expected $want, got $got"; exit 1; }
 
       # The log tail is what a person reads in the thread when a job fails. The
       # fixture ends the way real logs do — a step after the failure, then the

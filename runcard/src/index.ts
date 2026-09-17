@@ -34,13 +34,30 @@
  * of (event_type, run_id, run_attempt); `deploy-gate` finds them by `sha`;
  * `slack.readTrend` reads `repo` and the numbers. See `slack`'s `EventPayload`.
  *
+ * ── TEST REPORTS CROSS JOBS AS ARTIFACTS ────────────────────────────────────
+ * A `wildbit.test-report/v1` built in job A has to reach the watcher in job B,
+ * on another runner, with no shared disk. Each job uploads its report with
+ * `actions/upload-artifact` under a name starting `test-report-` (with
+ * `overwrite: true`), and `watch` reads them back through `github.runArtifactFiles`
+ * when it closes, merges them with `testing.merge`, maps features when it has the
+ * specs, and forwards ONE report to `slack.render`/`slack.breakdown`.
+ *
+ * Chosen over a `runcard.attachReport` that posts each report into the card's
+ * thread: that would put multi-kilobyte JSON through Slack metadata (capped, and
+ * a report of 600 suites does not fit), race the watcher's first post, depend on
+ * a Slack token every job would then need (Dependabot runs have none), and leave
+ * nothing durable. An artifact needs only the `actions: read` the watcher already
+ * holds, costs one step per job, is retained with the run, and is the file a
+ * later Grafana import reads. `report` takes the reports directly: a single job
+ * already has them in hand.
+ *
  * ── NOTIFICATION IS BEST-EFFORT ─────────────────────────────────────────────
  * No function here fails a build because Slack or the API was slow. They throw
  * only on MISCONFIGURATION (bad JSON, a `selfJob` that matches nothing, a token
  * that cannot read the run) — the failures that would otherwise hold a runner
  * until the deadline and render a card that lies.
  */
-import { dag, Secret, object, func } from "@dagger.io/dagger"
+import { dag, Directory, File, Secret, object, func } from "@dagger.io/dagger"
 
 type ItemState = "pending" | "running" | "ok" | "fail" | "skip"
 /** One card row, the shape `slack.render` takes. */
@@ -201,6 +218,26 @@ function assertEventType(eventType: string): void {
   }
 }
 
+/** A report file as `github.runArtifactFiles` returns it. */
+type ArtifactFile = { artifact: string; path: string; contents: string }
+
+/**
+ * Every `wildbit.test-report/v1` object in `raw` (one object, or an array).
+ * `what` names the source in the error. Anything that is JSON but not a report
+ * is rejected: a caller who passed the wrong file wants to hear it.
+ */
+function reportsIn(raw: string, what: string): unknown[] {
+  const v = parse<unknown>(raw, what)
+  if (v === undefined) return []
+  const arr = Array.isArray(v) ? v : [v]
+  arr.forEach((x, i) => {
+    if ((x as { schema?: unknown })?.schema !== "wildbit.test-report/v1") {
+      throw new Error(`runcard: ${what}[${i}] is not a wildbit.test-report/v1 (schema: ${JSON.stringify((x as { schema?: unknown })?.schema)})`)
+    }
+  })
+  return arr
+}
+
 @object()
 export class Runcard {
   /**
@@ -232,6 +269,18 @@ export class Runcard {
    *   `if: always()`): it edits that run's existing card instead of posting a
    *   new one, and does not re-post failures the first watcher already threaded
    *   (every job that failed before that watcher completed).
+   * @param reportArtifacts artifact name prefix, e.g. `test-report-`. At close the
+   *   watcher reads every `*.json` inside the run's artifacts with that prefix,
+   *   keeps the `wildbit.test-report/v1` ones, merges them and renders the card's
+   *   test line and the thread's test sections from the result. Empty (default)
+   *   reads nothing. Jobs upload with `overwrite: true` so a re-run replaces its
+   *   report instead of failing the upload.
+   * @param testReports JSON of reports in hand (one or an array), merged with the
+   *   artifacts. For a resuming watcher that `needs` a job exposing one as output.
+   * @param specs the `specs/features` directory (sparse checkout in the watcher
+   *   job). When given, the merged report is mapped to features and any drift is
+   *   posted to the thread — report-only.
+   * @param coverageMap a coverage map outside `specs` (overrides `specs/coverage.tsv`).
    */
   @func({ cache: "never" })
   async watch(
@@ -242,11 +291,13 @@ export class Runcard {
     slackToken?: Secret,
     workflowFile = "", branch = "", msg = "", title = "", runnerPrices = "",
     pollSeconds = 30, deadlineMinutes = 100, resumeAfter = "",
+    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File,
   ): Promise<string> {
     if (!slackChannel.trim() || !(await present(slackToken))) return "skipped"
     const token = slackToken as Secret
     const defs = parseRows(rows)
     assertEventType(eventType)
+    const inHand = reportsIn(testReports, "testReports") // validated before a runner is held
     if (!selfJob.trim()) throw new Error("runcard: 'selfJob' is empty — the watcher would count itself and never see the run finish")
     const prices = { ...DEFAULT_PRICES, ...(parse<Record<string, number>>(runnerPrices, "runnerPrices") ?? {}) }
     const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
@@ -259,8 +310,8 @@ export class Runcard {
     const trend = await slack.readTrend(token, slackChannel, eventType, repo, bust(), { excludeRunId: runId })
     const t0 = Date.now()
     let runStart = t0
-    const render = (status: string, items: Item[]) => slack.render(
-      cardTitle, status, JSON.stringify(meta), JSON.stringify(items), Math.max(0, Date.now() - runStart), eventType, { metrics: "", trend },
+    const render = (status: string, items: Item[], report = "") => slack.render(
+      cardTitle, status, JSON.stringify(meta), JSON.stringify(items), Math.max(0, Date.now() - runStart), eventType, { metrics: "", trend, report },
     )
     let items: Item[] = defs.map((d) => ({ name: d.row, st: "pending" }))
     // Resuming: the card is the one the first watcher left `waiting`. Only when it
@@ -364,12 +415,16 @@ export class Runcard {
     const failed = items.some((i) => i.st === "fail")
     const status = failed ? "fail" : outcome === "approval" ? "waiting" : "ok"
     const elapsed = Math.max(0, Date.now() - runStart)
+    const collected = reportArtifacts.trim() || inHand.length
+      ? await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), inHand, specs, coverageMap, bust())
+      : { report: "", notes: [] as string[] }
     if (ts) {
-      await slack.post(token, slackChannel, await render(status, items), { ts })
+      await slack.post(token, slackChannel, await render(status, items, collected.report), { ts })
     } else {
-      ts = await slack.post(token, slackChannel, await render(status, items))
+      ts = await slack.post(token, slackChannel, await render(status, items, collected.report))
     }
-    await slack.breakdown(token, slackChannel, ts, status, JSON.stringify(items), elapsed, { metrics: "", trend })
+    await slack.breakdown(token, slackChannel, ts, status, JSON.stringify(items), elapsed, { metrics: "", trend, report: collected.report })
+    if (collected.notes.length) await slack.threadReply(token, slackChannel, ts, collected.notes.join("\n"))
     const stats = await this.runStats(githubToken, repo, runId, all, selfJob, runStart, outcome, prices, workflowFile, branch, bust())
     await slack.threadReply(token, slackChannel, ts, stats)
     return status
@@ -389,6 +444,13 @@ export class Runcard {
    * @param jobName the job's `name:`; empty works when the run has exactly one job.
    * @param rows optional JSON `[{row, match, mode}]` matched against STEP names,
    *   to group or rename steps. Empty means one row per step.
+   * @param testReports JSON of this job's `wildbit.test-report/v1` reports (one or
+   *   an array). They are merged, drive the card's test line, and add a
+   *   breakdown to the thread. Empty keeps the card exactly as before.
+   * @param testReportsFile the same, from a file (`--test-reports-file=./test-report.json`);
+   *   a report of hundreds of suites is too long for a command-line argument.
+   * @param specs `specs/features`, to map the merged report to features (report-only).
+   * @param coverageMap a coverage map outside `specs`.
    */
   @func({ cache: "never" })
   async report(
@@ -398,10 +460,15 @@ export class Runcard {
     githubToken: Secret, slackChannel: string,
     slackToken?: Secret,
     jobName = "", rows = "", msg = "", title = "",
+    testReports = "", testReportsFile?: File, specs?: Directory, coverageMap?: File,
   ): Promise<string> {
     if (!slackChannel.trim() || !(await present(slackToken))) return "skipped"
     const token = slackToken as Secret
     assertEventType(eventType)
+    const inHand = [
+      ...reportsIn(testReports, "testReports"),
+      ...(testReportsFile ? reportsIn(await testReportsFile.contents(), "testReportsFile") : []),
+    ]
     if (!["success", "failure", "cancelled"].includes(jobStatus)) {
       throw new Error(`runcard: jobStatus '${jobStatus}' is not success|failure|cancelled — pass \${{ job.status }}`)
     }
@@ -438,10 +505,18 @@ export class Runcard {
     const started = Date.parse(job?.started_at ?? "") || Date.now()
     const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
     const trend = await slack.readTrend(token, slackChannel, eventType, repo, bust)
-    const body = await slack.render(title || `${repo} · ${refName(ref)}`, status, JSON.stringify(meta), JSON.stringify(items), Math.max(0, Date.now() - started), eventType, { metrics: "", trend })
+    const collected = inHand.length
+      ? await this.collectReports(githubToken, repo, runId, "", inHand, specs, coverageMap, bust)
+      : { report: "", notes: [] as string[] }
+    const elapsed = Math.max(0, Date.now() - started)
+    const body = await slack.render(title || `${repo} · ${refName(ref)}`, status, JSON.stringify(meta), JSON.stringify(items), elapsed, eventType, { metrics: "", trend, report: collected.report })
     const ts = await slack.post(token, slackChannel, body)
     if (status === "fail" && ts && job?.id) {
       await this.postJobFailure(githubToken, token, slackChannel, ts, repo, job, bust, false)
+    }
+    if (ts && collected.report) {
+      await slack.breakdown(token, slackChannel, ts, status, JSON.stringify(items), elapsed, { metrics: "", trend, report: collected.report })
+      if (collected.notes.length) await slack.threadReply(token, slackChannel, ts, collected.notes.join("\n"))
     }
     return status
   }
@@ -505,6 +580,73 @@ export class Runcard {
     const js = parse<GhJob[]>(jobs, "jobs")
     if (!Array.isArray(js)) throw new Error("runcard: 'jobs' must be a JSON array")
     return JSON.stringify(computeRows(parseRows(rows), js, selfJob))
+  }
+
+  /**
+   * The run's test reports as ONE merged `wildbit.test-report/v1`, plus notes for
+   * the thread (unreadable artifacts, feature-map drift). Returns JSON
+   * `{report, notes}`; `report` is the report's JSON string, "" when there is none.
+   *
+   * What `watch` and `report` do at close, exposed so a job can reuse it — e.g. to
+   * write `testing.summaryMarkdown` of the whole run to `$GITHUB_STEP_SUMMARY` —
+   * and so the artifact handoff is probed in CI without Slack.
+   *
+   * Best-effort: a report that cannot be read is a note, never an error — the
+   * card's verdict comes from the jobs, and the reports only describe it. Only a
+   * malformed `testReports` argument throws, because that is the caller's wiring.
+   *
+   * @param reportArtifacts artifact name prefix (`test-report-`); empty reads none.
+   * @param testReports     JSON reports in hand, one or an array.
+   * @param cacheBust       MUST vary per call; artifacts uploaded since are otherwise invisible.
+   */
+  @func({ cache: "never" })
+  async runReports(
+    githubToken: Secret, repo: string, runId: string, cacheBust: string,
+    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File,
+  ): Promise<string> {
+    return JSON.stringify(await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), reportsIn(testReports, "testReports"), specs, coverageMap, cacheBust))
+  }
+
+  private async collectReports(
+    githubToken: Secret, repo: string, runId: string, artifactPrefix: string, inHand: unknown[],
+    specs: Directory | undefined, coverageMap: File | undefined, bust: string,
+  ): Promise<{ report: string; notes: string[] }> {
+    const notes: string[] = []
+    const reports: unknown[] = [...inHand]
+    if (artifactPrefix) {
+      try {
+        const got = JSON.parse(await dag.github().runArtifactFiles(githubToken, repo, runId, artifactPrefix, `${bust}:artifacts`, { pattern: "**/*.json", maxBytes: 5000000, maxPages: 10 })) as {
+          files: ArtifactFile[]; skipped: { artifact: string; path: string; reason: string }[]
+        }
+        for (const f of got.files) {
+          try {
+            reports.push(...reportsIn(f.contents, `${f.artifact}/${f.path}`))
+          } catch (e) {
+            notes.push(`• test report \`${f.artifact}/${f.path}\` ignored: ${(e as Error).message.slice(0, 200)}`)
+          }
+        }
+        for (const s of got.skipped) notes.push(`• test report \`${s.artifact}${s.path ? `/${s.path}` : ""}\` not read: ${s.reason}`)
+        if (!got.files.length && !got.skipped.length) notes.push(`• no \`${artifactPrefix}*\` artifact in this run — did the test jobs upload their reports?`)
+      } catch (e) {
+        console.error("runcard: reading report artifacts failed:", e)
+        notes.push(`• test report artifacts unreadable: ${(e as Error).message.slice(0, 300)}`)
+      }
+    }
+    if (!reports.length) return { report: "", notes }
+    const testing = dag.testing()
+    try {
+      let report = await testing.merge(JSON.stringify(reports))
+      if (specs) {
+        const fm = JSON.parse(await testing.features(report, specs, { map: coverageMap, strict: false })) as { report: unknown; ok: boolean; problems: string[] }
+        report = JSON.stringify(fm.report)
+        if (!fm.ok) notes.push(`*Feature map drift* _(report-only)_\n${fm.problems.map((p) => `• ${p}`).join("\n")}`)
+      }
+      return { report, notes }
+    } catch (e) {
+      console.error("runcard: merging test reports failed:", e)
+      notes.push(`• test reports could not be merged: ${(e as Error).message.slice(0, 300)}`)
+      return { report: "", notes }
+    }
   }
 
   /** Posts one failed job to the thread: failing step, annotations and (when published) the log tail. */

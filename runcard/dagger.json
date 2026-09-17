@@ -12,6 +12,10 @@
     {
       "name": "slack",
       "source": "../slack"
+    },
+    {
+      "name": "testing",
+      "source": "../testing"
     }
   ]
 }
