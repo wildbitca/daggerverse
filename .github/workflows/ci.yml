@@ -224,12 +224,18 @@ jobs:
       - name: runcard.watch without a Slack token returns immediately
         env:
           GH_API_TOKEN: ${{ github.token }}
+          GH_SERVER_URL: ${{ github.server_url }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_SHA: ${{ github.sha }}
+          GH_REF: ${{ github.ref }}
+          GH_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           out="$(timeout 300 dagger --progress plain -m ./runcard call watch \
-            --repo="${{ github.repository }}" --ref="${{ github.ref }}" --sha="${{ github.sha }}" \
-            --actor=probe --event=probe --run-id="${{ github.run_id }}" --run-number=0 \
-            --run-attempt="${{ github.run_attempt }}" --server="${{ github.server_url }}" \
+            --repo="${GH_REPOSITORY}" --ref="${GH_REF}" --sha="${GH_SHA}" \
+            --actor=probe --event=probe --run-id="${GH_RUN_ID}" --run-number=0 \
+            --run-attempt="${GH_RUN_ATTEMPT}" --server="${GH_SERVER_URL}" \
             --rows='[{"row":"ci","match":"ci","mode":"exact"}]' --self-job=ci --event-type=daggerverse_probe \
             --github-token=env:GH_API_TOKEN --slack-channel=C0PROBE)"
           [ "$out" = "skipped" ] || { echo "::error title=watch did not skip::expected 'skipped', got '$out'"; exit 1; }
