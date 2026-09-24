@@ -43,7 +43,7 @@ jobs:
       # checkout is shallow and the gate passes without looking at anything — the
       # exact false green it exists to prevent. `scan.gitleaks` now ASSERTS this
       # rather than trusting the line above it, so removing it fails loudly.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -181,7 +181,7 @@ jobs:
           jq -c .totals "$RUNNER_TEMP"/reports/*/test-report.json
 
       - name: Upload report artifact (unit)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-report-probe-unit
           path: ${{ runner.temp }}/reports/unit/test-report.json
@@ -189,7 +189,7 @@ jobs:
           retention-days: 1
 
       - name: Upload report artifact (e2e)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-report-probe-e2e
           path: ${{ runner.temp }}/reports/e2e/test-report.json
