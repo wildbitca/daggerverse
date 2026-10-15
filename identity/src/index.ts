@@ -255,8 +255,8 @@ export class Identity {
    *   dagger call gcp-access-token \
    *     --request-url=env:ACTIONS_ID_TOKEN_REQUEST_URL \
    *     --request-token=env:ACTIONS_ID_TOKEN_REQUEST_TOKEN \
-   *     --workload-identity-provider=projects/945676640602/locations/global/workloadIdentityPools/ghactions/providers/ghactions \
-   *     --service-account=sops-decrypt@wildbit-pacha-dev.iam.gserviceaccount.com \
+   *     --workload-identity-provider=projects/123456789012/locations/global/workloadIdentityPools/my-pool/providers/my-provider \
+   *     --service-account=deployer@my-project.iam.gserviceaccount.com \
    *     --cache-bust="$GITHUB_RUN_ID"
    *
    * @param requestUrl               `ACTIONS_ID_TOKEN_REQUEST_URL`, as a Secret. Not
@@ -296,7 +296,7 @@ export class Identity {
     const provider = (workloadIdentityProvider ?? "").trim()
     if (!provider) {
       throw new Error(
-        "identity: 'workloadIdentityProvider' is empty. It is the full resource name, e.g. projects/945676640602/locations/global/workloadIdentityPools/ghactions/providers/ghactions",
+        "identity: 'workloadIdentityProvider' is empty. It is the full resource name, e.g. projects/123456789012/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
       )
     }
     if (!WIF_RE.test(provider)) {
