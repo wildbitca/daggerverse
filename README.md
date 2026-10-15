@@ -417,14 +417,16 @@ commit.
   Breaking means a function or parameter removed or renamed, a new required parameter, a
   changed default, or a changed output or exit behaviour, including a gate that now fails
   on input it used to pass. New optional parameters and new optional output fields are not
-  breaking. `runcard` loads `github`, `slack` and `testing` by local path, so a `runcard`
-  tag ships them as they are at that commit. Its entry names any changes it bundles.
+  breaking. New human-facing output only (a Slack thread section, a step-summary column)
+  is not breaking either. `runcard` loads `github`, `slack` and `testing` by local path, so
+  a `runcard` tag ships them as they are at that commit. Its entry names any changes it
+  bundles.
 - **Tag message.** `git tag -a <module>/vX.Y.Z -m "<module> vX.Y.Z: <summary>"`. Never
   move or rewrite a published tag.
 - **Safe to bump.** A version bump needs no per-consumer regression check only if every
-  changelog entry between the pinned and target version says `Breaking: none`; otherwise
-  check each consumer's call sites first. A release with no entry (anything tagged before
-  the module's first entry) counts as not `Breaking: none`.
+  changelog entry after the pinned version, up to and including the target, says
+  `Breaking: none`; otherwise check each consumer's call sites first. A release with no
+  entry (anything tagged before the module's first entry) counts as not `Breaking: none`.
 
 ## Conventions
 

@@ -12,6 +12,11 @@ property, a one-test file's basename, then an id like `TS-E2E-012` in the title;
 optional `idProperty`/`idPattern`), record the rule used in `scenario.idSource` and list
 title-only ids in `unanchoredScenarios`.
 
-Breaking: without any new argument, a JUnit testcase with a `scenarioId` property or an id
-like `TS-E2E-012` in its title is now keyed by that id instead of its title. A
-`coverage.tsv` row naming such a scenario by its title must be renamed to the id.
+Breaking: without any new argument, a JUnit testcase is now keyed differently than before
+in three cases: it has a `scenarioId` property; its title matches the default id pattern
+(e.g. `TS-E2E-012`); or it is the only testcase in its `file` (previously this applied only
+when `runner == "maestro"` — now it applies to any runner, so a non-Maestro single-test
+file is also affected). A `coverage.tsv` row naming such a scenario by its old id (usually
+the title) must be renamed to the new one. New optional output fields (`idSource`,
+`unanchoredScenarios`) and the new `summaryMarkdown` rendering (an "Id from" column, an
+unanchored-ids warning) are additive and not breaking on their own.
