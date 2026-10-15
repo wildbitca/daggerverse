@@ -55,11 +55,15 @@ worth keeping, because they are the argument if anyone proposes going back:
   known error as success. Measured: an injected flag named `--esto-no-existe-jamas` was
   reported OK.
 
-What made public safe was checking rather than assuming: zero GCP project ids, zero Slack
-channels, zero approvers, zero service-account emails and zero hostnames appear in the
-module code — the four near-hits are examples inside error strings and a User-Agent. The
+What made public safe was checking rather than assuming: zero Slack channels, zero
+approvers and zero hostnames appear in the module code. `identity`'s doc comments did
+carry a real GCP project number and a real service-account email as a worked example
+(fixed 2026-10-15 — they are now placeholders, `123456789012` / `my-project`); nothing
+else in the module code names a real GCP project id or service-account email. The
 deployment topology lives in the callers, which is where it was designed to live. All six
-commits were scanned with this repo's own `scan.gitleaks` before the flip: no findings.
+commits were scanned with this repo's own `scan.gitleaks` before the flip: no findings —
+gitleaks does not treat a project number or an SA email as a secret, so it would not have
+caught this.
 
 ⚠️ **Secret scanning is `disabled` and cannot be turned on from here.** An enterprise
 policy blocks modifying it over the API — it returns 422 and, because the provider sends
