@@ -403,6 +403,29 @@ Dagger's resolver follows for modules in a subdirectory. Consumers pin a **tag, 
 without anyone having chosen it. `dagger.json` records both the version and the resolved
 commit.
 
+- **Changelog.** Each module has its own `<module>/CHANGELOG.md`, newest first. The entry
+  goes in the same change that bumps the version, not afterwards.
+- **Entry format.**
+
+  ```
+  ## vX.Y.Z — YYYY-MM-DD
+  1–3 sentences in consumer terms: what changed and why.
+
+  Breaking: none | <what callers must change>
+  ```
+
+  Breaking means a function or parameter removed or renamed, a new required parameter, a
+  changed default, or a changed output or exit behaviour, including a gate that now fails
+  on input it used to pass. New optional parameters and new optional output fields are not
+  breaking. `runcard` loads `github`, `slack` and `testing` by local path, so a `runcard`
+  tag ships them as they are at that commit. Its entry names any changes it bundles.
+- **Tag message.** `git tag -a <module>/vX.Y.Z -m "<module> vX.Y.Z: <summary>"`. Never
+  move or rewrite a published tag.
+- **Safe to bump.** A version bump needs no per-consumer regression check only if every
+  changelog entry between the pinned and target version says `Breaking: none`; otherwise
+  check each consumer's call sites first. A release with no entry (anything tagged before
+  the module's first entry) counts as not `Breaking: none`.
+
 ## Conventions
 
 - **Complex arguments travel as JSON strings.** Structural types cross a Dagger module
