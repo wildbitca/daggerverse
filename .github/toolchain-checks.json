@@ -11,5 +11,7 @@
  {"kind":"count","file":"identity/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"identity engine v{dagger}"},
  {"kind":"count","file":"runcard/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"runcard engine v{dagger}"},
  {"kind":"present","file":"github/src/index.ts","literal":"curlimages/curl:{curl}","what":"curl {curl} (github)"},
- {"kind":"count","file":"testing/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"testing engine v{dagger}"}
+ {"kind":"count","file":"testing/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"testing engine v{dagger}"},
+ {"kind":"count","file":"toolcache/dagger.json","literal":"\"engineVersion\": \"v{dagger}\"","count":1,"what":"toolcache engine v{dagger}"},
+ {"kind":"present","file":"toolcache/src/index.ts","literal":"alpine:{alpine_toolcache}","what":"alpine {alpine_toolcache} (toolcache export image)"}
 ]

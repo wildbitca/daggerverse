@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           rc=0
-          for m in slack scan guards github identity testing runcard; do
+          for m in slack scan guards github identity testing runcard toolcache; do
             echo "── $m"
             dagger develop -m "./$m" >/dev/null
             ( cd "$m" && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
@@ -105,7 +105,7 @@ jobs:
       - name: Every module loads and exposes functions
         run: |
           set -euo pipefail
-          for m in slack scan guards github identity testing runcard; do
+          for m in slack scan guards github identity testing runcard toolcache; do
             n="$(dagger -m "./$m" functions 2>/dev/null | grep -cvE '^\s*$|^Name\s' || true)"
             echo "$m: $n function(s)"
             [ "${n:-0}" -ge 1 ] || { echo "::error title=Module exposes nothing::$m listed no functions — it compiled but did not register"; exit 1; }
