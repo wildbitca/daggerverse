@@ -551,6 +551,24 @@ commit.
   Module side: an optional `Secret` that arrives empty should be treated as absent, so the
   two sides of this cannot disagree.
 
+- **An optional complex-type parameter (`Directory`, `Container`, `File`, `Secret`) on a
+  function in a DEPENDENCY module crashes the generated TypeScript client the moment a
+  caller actually supplies a value — but works fine when the caller omits it.** Measured
+  2026-10-18 building `toolcache`: a two-line probe function with an identical body, called
+  cross-module, with the SAME value — `Directory` parameter required: works; optional:
+  `Cannot read properties of undefined (reading 'replace')`, in both cases with the CLI
+  flag actually passed. A same-module call (the function's own module calling itself) does
+  not trip this; it is specifically the dependency boundary. This is the opposite failure
+  shape from the `Secret` rule below — there an optional param silently takes the WRONG
+  branch, here it crashes outright — so do not assume one rule's fix covers the other.
+
+  Since a real caller (a GHA workflow that always `mkdir -p`s before `--warm-tools=$DIR`)
+  never actually omits the flag, making the parameter optional does not even buy the
+  "caller can skip it" ergonomics it looks like it would — it just means every real
+  invocation crashes. Make it REQUIRED, and have callers pass an explicit empty value
+  (`dag.directory()`, `dag.container()`, …) instead of omitting the argument. A module's
+  own cache-miss handling can then treat "empty" and "missing" identically, which it
+  usually already does.
 - **No numeric separators in a parameter default.** `maxBytes = 5_000_000` registers as a
   default of **5**: measured 2026-09-17 on `github.runArtifactFiles`, which then skipped a
   5 MB file as "over maxBytes 5". `tsc` is clean and the value is right in TypeScript; the

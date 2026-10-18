@@ -35,6 +35,20 @@
  * existing convention (`pacha-app-*`, `pacha-api-*`, `pacha-site-*`) — a shared
  * default would let two callers collide on the same cacheVolume names the moment
  * either forgot to override it.
+ *
+ * `warmTools` IS REQUIRED, not optional, and that is deliberate (v0.1.1). An
+ * OPTIONAL `Directory` parameter on a function in a dependency module crashes the
+ * generated TypeScript client with "Cannot read properties of undefined (reading
+ * 'replace')" the moment a caller actually supplies a value — but works with no
+ * error when the caller omits the flag entirely. Measured with a two-line probe
+ * function doing nothing but returning its input: identical signature, `Directory`
+ * required — works; optional — crashes, in BOTH cases with a value actually
+ * passed. Every real caller (a GHA workflow that always runs `mkdir -p` before
+ * `--warm-tools=$DIR`, cache hit or not) always supplies a value, so an optional
+ * parameter here would crash on every single real invocation. Callers pass
+ * `dag.directory()` (empty) when they have nothing to seed from; this function's
+ * own cache-miss handling (the `-s` test below) already treats an empty directory
+ * exactly like a true miss.
  */
 import { dag, Container, Directory, object, func } from "@dagger.io/dagger"
 
@@ -73,10 +87,11 @@ export class Toolcache {
    *                        workdir, e.g. "/src/node_modules".
    * @param warmTools       the `Directory` a previous run's `exportNpm` returned,
    *                        round-tripped through `actions/cache` by the caller's
-   *                        workflow. Omit on a cache miss (first run, or no save hit).
+   *                        workflow. Pass `dag.directory()` (empty) on a cache miss
+   *                        — see the module header on why this cannot be optional.
    */
   @func()
-  npmCache(base: Container, cacheKey: string, nodeModulesPath: string, warmTools?: Directory): Container {
+  npmCache(base: Container, cacheKey: string, nodeModulesPath: string, warmTools: Directory): Container {
     if (!cacheKey) {
       throw new Error("npmCache: 'cacheKey' is empty. A shared default would let two callers collide on the same cacheVolume names; pick one unique to this repository.")
     }
@@ -87,8 +102,6 @@ export class Toolcache {
     const mounted = base
       .withMountedCache("/root/.npm", dag.cacheVolume(`${cacheKey}-npm`))
       .withMountedCache(nodeModulesPath, dag.cacheVolume(`${cacheKey}-node-modules`))
-
-    if (!warmTools) return mounted
 
     return mounted.withMountedDirectory("/warm-tools-in", warmTools).withExec(["sh", "-c", `set -uo pipefail
 echo "restoring the npm cache"
