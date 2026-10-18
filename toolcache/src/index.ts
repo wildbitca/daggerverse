@@ -103,7 +103,7 @@ export class Toolcache {
       .withMountedCache("/root/.npm", dag.cacheVolume(`${cacheKey}-npm`))
       .withMountedCache(nodeModulesPath, dag.cacheVolume(`${cacheKey}-node-modules`))
 
-    return mounted.withMountedDirectory("/warm-tools-in", warmTools).withExec(["sh", "-c", `set -uo pipefail
+    return mounted.withMountedDirectory("/warm-tools-in", warmTools).withExec(["sh", "-c", `set -u
 echo "restoring the npm cache"
 mkdir -p /root/.npm
 [ -s /warm-tools-in/${NPM_TAR} ] && tar -xf /warm-tools-in/${NPM_TAR} -C /root/.npm --skip-old-files 2>/dev/null || true
@@ -130,7 +130,7 @@ du -sh /root/.npm "${nodeModulesPath}" 2>/dev/null || true`])
     if (!cacheKey) {
       throw new Error("exportNpm: 'cacheKey' is empty. It must be the identical value passed to 'npmCache' for this job, or this reads back empty cacheVolumes under a different name.")
     }
-    const script = `set -euo pipefail
+    const script = `set -eu
 echo "bust: ${cacheBust}" > /dev/null
 mkdir -p /warm-tools
 tar -cf /warm-tools/${NPM_TAR} -C /root/.npm . 2>/dev/null || rm -f /warm-tools/${NPM_TAR}
