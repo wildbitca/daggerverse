@@ -25,6 +25,7 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 | `scan/` | gitleaks and Trivy, with the exact invocations ADR-0003 §2.2 pins | **published** |
 | `github/` | check-runs queries, releases, reruns, step summaries, annotations, run/job/artifact reads for live cards | **published** |
 | `testing/` | Native test-report parsers and the org-wide `wildbit.test-report/v1`: flutter, vitest, JUnit (Maestro, Cypress), Stryker, lcov, istanbul; merge, feature mapping, step summary | **published** |
+| `toolcache/` | npm download cache + `node_modules`, round-tripped through `actions/cache` the caller's workflow controls — not Dagger's own GHA cache exporter, which stored nothing measurable anywhere it was checked | **published** |
 
 ## Consuming a module
 
@@ -394,6 +395,60 @@ return t.merge(`[${unit},${cov}]`)
 "set +e; CI=true npx ng test --no-watch --reporters=json --output-file=/tmp/vitest.json > /tmp/test.log 2>&1; echo $? > /tmp/vitest-exit"
 // then t.vitestReportFile(c.file("/tmp/vitest.json"), "unit", { exitCode: exit }) as in (b)
 ```
+
+## npm/node_modules cache (`toolcache`)
+
+`pacha`, `pacha-api` and `pacha-site` already hand-roll an identical shape: an npm
+download cache and a `node_modules` cache, round-tripped through `actions/cache` the
+workflow controls directly. `toolcache` is that pattern, extracted so other
+Node/TypeScript pipelines can adopt it instead of Dagger's own GHA cache exporter
+(`_EXPERIMENTAL_DAGGER_CACHE_CONFIG`), which measured 0 stored entries in every repo
+that carried it and is a race once a job runs more than one Dagger session (see
+`pacha-site` commit `dbc86e8`, 2026-09-05).
+
+Two functions, called as two separate `dagger call` invocations within the SAME GHA
+job — a Dagger `cacheVolume` is engine-internal state and does not survive past the
+job that started it, so this cannot be a cross-job handoff (same caution as "A cache
+volume is NOT a handoff channel" above, which is about test reports, not this module,
+but the mechanism is the same):
+
+```yaml
+      - name: Restore the npm cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: my-repo-npm-v1-${{ hashFiles('package-lock.json') }}
+          restore-keys: my-repo-npm-v1-
+
+      # inside the caller's own module, NOT a direct `dagger call`:
+      #   base(source, warmTools) {
+      #     return dag.toolcache().npmCache(
+      #       dag.container().from(NODE_IMG).withDirectory("/src", source).withWorkdir("/src"),
+      #       "my-repo", "/src/node_modules", warmTools,
+      #     ).withExec(["sh", "-c", "npm ci || npm install"])
+      #   }
+      - run: dagger -m . call ci --source=. --warm-tools="${{ runner.temp }}/npm-cache" ...
+
+      - name: Take the npm cache back out of the engine
+        if: always()
+        id: toolout
+        run: |
+          mkdir -p "${{ runner.temp }}/npm-cache"
+          dagger -m . call export-tool-cache --cache-bust="${{ github.run_id }}" \
+            export --path="${{ runner.temp }}/npm-cache"
+
+      - name: Save the npm cache
+        if: steps.toolout.outcome == 'success' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/npm-cache
+          key: my-repo-npm-v1-${{ hashFiles('package-lock.json') }}
+```
+
+`cacheKey` (here `"my-repo"`) must be unique per calling repository — the existing
+convention is the repo name (`pacha-app-*`, `pacha-api-*`, `pacha-site-*`). It is a
+required parameter with no default on purpose: a shared default would let two callers
+silently collide on the same `cacheVolume` names.
 
 ## Versioning
 
