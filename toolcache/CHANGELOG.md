@@ -2,6 +2,28 @@
 
 Newest first. Format and rules: [Versioning](../README.md#versioning).
 
+## v0.2.0 — 2026-10-19
+Fixed a correctness bug: `npmCache`/`exportNpm` minted their own `dag.cacheVolume()`
+from the `cacheKey` string, but Dagger namespaces a `cacheVolume()` call by the
+MODULE that makes it, not just the key — so this module's internal call and a
+caller's own identically-keyed call in its own `base()` landed in two disjoint
+volumes that only ever shared a label. Every `actions/cache` round-trip built on
+this module has been seeding and exporting an empty volume since adoption (see
+`org-gitops/docs/cache-investigation-2026-10-19.md` for the full trace evidence).
+
+Both functions now take the npm and `node_modules` `CacheVolume`s as parameters
+instead of a `cacheKey` string. Callers must create the volumes themselves, in
+their own module, with `dag.cacheVolume(...)`, and pass the resulting objects to
+both `npmCache` and `exportNpm` — the same objects their own `base()` already
+mounts — so there is no second, toolcache-internal namespace left to diverge from.
+
+Breaking: yes. `npmCache(base, cacheKey, nodeModulesPath, warmTools)` is now
+`npmCache(base, npmCacheVolume, nodeModulesCacheVolume, nodeModulesPath,
+warmTools)`; `exportNpm(cacheKey, cacheBust)` is now `exportNpm(npmCacheVolume,
+nodeModulesCacheVolume, cacheBust)`. Every caller must update its call sites to
+construct `dag.cacheVolume('<repo>-npm')` / `dag.cacheVolume('<repo>-node-modules')`
+itself and pass them through, instead of passing a `cacheKey` string.
+
 ## v0.1.2 — 2026-10-18
 Both embedded scripts used `set -o pipefail`, a bash-only option. On a Debian
 base (`node:*-bookworm*`, used by 4 of the 5 repos that adopted this module in

@@ -19,22 +19,36 @@
  * mid-session race to corrupt. This module is that pattern, generalised.
  *
  * ── THE SHAPE, UNCHANGED FROM THE THREE HAND-ROLLED COPIES ──────────────────
- * Two Dagger `cacheVolume`s per caller (`<cacheKey>-npm`, `<cacheKey>-node-modules`),
- * shared by name within ONE Dagger engine — which is exactly the lifetime of a
- * single GitHub Actions job. `npmCache` mounts both onto a container the caller has
- * already prepared (source mounted, workdir set) and seeds them from a previous
- * run's `exportNpm` output when the caller has one. `exportNpm` reads the SAME two
- * volumes back out as a `Directory` the workflow can hand to `actions/cache/save`.
- * Both calls must happen within the SAME job: a `cacheVolume` is engine-internal
- * state, and a Dagger engine does not survive past the job that started it — it is
- * not a cross-job handoff channel (see this repository's README, "A cache volume is
- * NOT a handoff channel", measured on `elinvo-site`).
+ * Two Dagger `cacheVolume`s per caller, shared by name within ONE Dagger engine —
+ * which is exactly the lifetime of a single GitHub Actions job. `npmCache` mounts
+ * both onto a container the caller has already prepared (source mounted, workdir
+ * set) and seeds them from a previous run's `exportNpm` output when the caller has
+ * one. `exportNpm` reads the SAME two volumes back out as a `Directory` the
+ * workflow can hand to `actions/cache/save`. Both calls must happen within the
+ * SAME job: a `cacheVolume` is engine-internal state, and a Dagger engine does not
+ * survive past the job that started it — it is not a cross-job handoff channel
+ * (see this repository's README, "A cache volume is NOT a handoff channel",
+ * measured on `elinvo-site`).
  *
- * `cacheKey` is NOT optional and is not defaulted to anything derived from the
- * caller: every repository adopting this module must pick its own, matching the
- * existing convention (`pacha-app-*`, `pacha-api-*`, `pacha-site-*`) — a shared
- * default would let two callers collide on the same cacheVolume names the moment
- * either forgot to override it.
+ * ── CACHEVOLUME NAMESPACING: WHY THE VOLUMES ARE PASSED IN, NOT KEYED BY STRING ──
+ * Dagger namespaces a `dag.cacheVolume(key)` call by the MODULE that makes the
+ * call, not just by the key string (see `docs/cache-investigation-2026-10-19.md`
+ * in `org-gitops` for the full trace evidence). A v0.1.x caller that mounted
+ * `dag.cacheVolume('<repo>-npm')` in its own `base()` and then called this
+ * module's `npmCache(cacheKey: '<repo>-npm', ...)` was never touching the same
+ * volume: its own call landed in `mod(<repo>-ci.)`, while this module's internal
+ * `dag.cacheVolume()` call for the identical string landed in
+ * `mod(toolcache...)` — two disjoint volumes that only ever shared a label, so
+ * the `actions/cache` round-trip seeded and exported a volume `npm ci` never read
+ * from (confirmed: every restore showed ~336 bytes, i.e. two empty tars).
+ *
+ * The fix is for the CALLER to create the `CacheVolume`s (so they are namespaced
+ * to the caller's own module, matching whatever `base()` already mounts) and hand
+ * the resulting objects to `npmCache`/`exportNpm`, which now only mount whatever
+ * `CacheVolume` they are given — they never call `dag.cacheVolume()` themselves.
+ * Passing an already-constructed `CacheVolume` across the module boundary carries
+ * its resolved identity with it, so there is no second, toolcache-internal
+ * namespace left to diverge from.
  *
  * `warmTools` IS REQUIRED, not optional, and that is deliberate (v0.1.1). An
  * OPTIONAL `Directory` parameter on a function in a dependency module crashes the
@@ -50,7 +64,7 @@
  * own cache-miss handling (the `-s` test below) already treats an empty directory
  * exactly like a true miss.
  */
-import { dag, Container, Directory, object, func } from "@dagger.io/dagger"
+import { dag, Container, Directory, CacheVolume, object, func } from "@dagger.io/dagger"
 
 /**
  * Minimal image for `exportNpm`'s throwaway container. It only needs `tar` to read
@@ -76,32 +90,39 @@ export class Toolcache {
    * where `node_modules` should live — this only adds the two mounts and, on a
    * warm run, untars into them; it does not run `npm ci` or any install step.
    *
-   * @param base            container with the repository mounted and workdir set.
-   * @param cacheKey        namespaces the two cacheVolumes (`<cacheKey>-npm`,
-   *                        `<cacheKey>-node-modules`). Pick one unique to the calling
-   *                        repository (the existing convention is the repo name,
-   *                        e.g. "pacha-site") and pass the IDENTICAL value to
-   *                        `exportNpm`. Two callers that share a value share a cache,
-   *                        which is never what a second caller actually wants.
-   * @param nodeModulesPath absolute path where `node_modules` lives under `base`'s
-   *                        workdir, e.g. "/src/node_modules".
-   * @param warmTools       the `Directory` a previous run's `exportNpm` returned,
-   *                        round-tripped through `actions/cache` by the caller's
-   *                        workflow. Pass `dag.directory()` (empty) on a cache miss
-   *                        — see the module header on why this cannot be optional.
+   * @param base             container with the repository mounted and workdir set.
+   * @param npmCacheVolume   the `CacheVolume` to mount at `/root/.npm`. Create it in
+   *                         the CALLING repository's own module with
+   *                         `dag.cacheVolume('<repo>-npm')` — the same call the
+   *                         caller's own `base()` already makes — and pass the
+   *                         resulting object here and to `exportNpm`. Do not let
+   *                         this module mint its own from a string: a `CacheVolume`
+   *                         created inside `toolcache` is namespaced to `toolcache`,
+   *                         not to the caller, and lands in a different volume
+   *                         entirely even with an identical key (see module header).
+   * @param nodeModulesCacheVolume same as `npmCacheVolume`, for `node_modules`.
+   * @param nodeModulesPath  absolute path where `node_modules` lives under `base`'s
+   *                         workdir, e.g. "/src/node_modules".
+   * @param warmTools        the `Directory` a previous run's `exportNpm` returned,
+   *                         round-tripped through `actions/cache` by the caller's
+   *                         workflow. Pass `dag.directory()` (empty) on a cache miss
+   *                         — see the module header on why this cannot be optional.
    */
   @func()
-  npmCache(base: Container, cacheKey: string, nodeModulesPath: string, warmTools: Directory): Container {
-    if (!cacheKey) {
-      throw new Error("npmCache: 'cacheKey' is empty. A shared default would let two callers collide on the same cacheVolume names; pick one unique to this repository.")
-    }
+  npmCache(
+    base: Container,
+    npmCacheVolume: CacheVolume,
+    nodeModulesCacheVolume: CacheVolume,
+    nodeModulesPath: string,
+    warmTools: Directory,
+  ): Container {
     if (!nodeModulesPath.startsWith("/")) {
       throw new Error(`npmCache: 'nodeModulesPath' must be an absolute path, got "${nodeModulesPath}".`)
     }
 
     const mounted = base
-      .withMountedCache("/root/.npm", dag.cacheVolume(`${cacheKey}-npm`))
-      .withMountedCache(nodeModulesPath, dag.cacheVolume(`${cacheKey}-node-modules`))
+      .withMountedCache("/root/.npm", npmCacheVolume)
+      .withMountedCache(nodeModulesPath, nodeModulesCacheVolume)
 
     return mounted.withMountedDirectory("/warm-tools-in", warmTools).withExec(["sh", "-c", `set -u
 echo "restoring the npm cache"
@@ -116,20 +137,20 @@ du -sh /root/.npm "${nodeModulesPath}" 2>/dev/null || true`])
   /**
    * The npm + `node_modules` caches `npmCache` mounted, as a `Directory` the
    * workflow can hand to `actions/cache/save`. Call AFTER the build/test call in
-   * the SAME job: the two `cacheVolume`s are shared by name within one Dagger
-   * engine, so this picks up whatever that call's containers wrote into them.
+   * the SAME job, passing the IDENTICAL `CacheVolume` objects given to `npmCache`
+   * — this picks up whatever that call's containers wrote into them.
    *
-   * @param cacheKey  the IDENTICAL value passed to `npmCache` for this job.
+   * @param npmCacheVolume         the identical `CacheVolume` passed to `npmCache`
+   *                               for this job.
+   * @param nodeModulesCacheVolume the identical `CacheVolume` passed to `npmCache`
+   *                               for this job.
    * @param cacheBust varies the call so the engine does not serve a stale result
    *                  from a previous invocation in the same run; the GitHub run id
    *                  is the usual value. Unused beyond that — present only to defeat
    *                  caching of this function's own result.
    */
   @func()
-  async exportNpm(cacheKey: string, cacheBust: string): Promise<Directory> {
-    if (!cacheKey) {
-      throw new Error("exportNpm: 'cacheKey' is empty. It must be the identical value passed to 'npmCache' for this job, or this reads back empty cacheVolumes under a different name.")
-    }
+  async exportNpm(npmCacheVolume: CacheVolume, nodeModulesCacheVolume: CacheVolume, cacheBust: string): Promise<Directory> {
     const script = `set -eu
 echo "bust: ${cacheBust}" > /dev/null
 mkdir -p /warm-tools
@@ -141,8 +162,8 @@ du -sh /warm-tools/${NPM_TAR} /warm-tools/${NODE_MODULES_TAR} 2>/dev/null || tru
     return dag
       .container()
       .from(EXPORT_IMG)
-      .withMountedCache("/root/.npm", dag.cacheVolume(`${cacheKey}-npm`))
-      .withMountedCache("/node-modules-src", dag.cacheVolume(`${cacheKey}-node-modules`))
+      .withMountedCache("/root/.npm", npmCacheVolume)
+      .withMountedCache("/node-modules-src", nodeModulesCacheVolume)
       .withExec(["sh", "-c", script])
       .directory("/warm-tools")
   }

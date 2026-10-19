@@ -422,9 +422,14 @@ but the mechanism is the same):
 
       # inside the caller's own module, NOT a direct `dagger call`:
       #   base(source, warmTools) {
+      #     // Create the CacheVolumes HERE, in the caller's own module, so they are
+      #     // namespaced to the caller — not inside toolcache, which would mint a
+      #     // disjoint volume under the same key (see CHANGELOG v0.2.0).
+      #     const npmVol = dag.cacheVolume("my-repo-npm")
+      #     const nodeModulesVol = dag.cacheVolume("my-repo-node-modules")
       #     return dag.toolcache().npmCache(
       #       dag.container().from(NODE_IMG).withDirectory("/src", source).withWorkdir("/src"),
-      #       "my-repo", "/src/node_modules", warmTools,
+      #       npmVol, nodeModulesVol, "/src/node_modules", warmTools,
       #     ).withExec(["sh", "-c", "npm ci || npm install"])
       #   }
       - run: dagger -m . call ci --source=. --warm-tools="${{ runner.temp }}/npm-cache" ...
@@ -434,6 +439,7 @@ but the mechanism is the same):
         id: toolout
         run: |
           mkdir -p "${{ runner.temp }}/npm-cache"
+          # export-tool-cache passes the SAME two CacheVolume objects used above
           dagger -m . call export-tool-cache --cache-bust="${{ github.run_id }}" \
             export --path="${{ runner.temp }}/npm-cache"
 
@@ -445,10 +451,13 @@ but the mechanism is the same):
           key: my-repo-npm-v1-${{ hashFiles('package-lock.json') }}
 ```
 
-`cacheKey` (here `"my-repo"`) must be unique per calling repository — the existing
-convention is the repo name (`pacha-app-*`, `pacha-api-*`, `pacha-site-*`). It is a
-required parameter with no default on purpose: a shared default would let two callers
-silently collide on the same `cacheVolume` names.
+The `CacheVolume`s (here keyed `"my-repo-npm"` / `"my-repo-node-modules"`) must be
+created by the CALLING repository's own module, not by `toolcache` — Dagger
+namespaces a `cacheVolume()` call by the module that makes it, so a volume `toolcache`
+mints internally from an identical key string is a different volume from the one the
+caller already mounts in its own `base()`. Pass the identical `CacheVolume` objects to
+both `npmCache` and `exportNpm`. Pick a key unique per calling repository — the
+existing convention is the repo name (`pacha-app-*`, `pacha-api-*`, `pacha-site-*`).
 
 ## Versioning
 
