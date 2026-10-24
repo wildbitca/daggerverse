@@ -1,0 +1,49 @@
+{
+  "why": "final closes even when a row never got a job; the missing row is skipped.",
+  "rows": [
+    {
+      "row": "build",
+      "match": "Build"
+    },
+    {
+      "row": "deploy",
+      "match": "Deploy",
+      "mode": "exact"
+    }
+  ],
+  "selfJob": "refresh",
+  "final": true,
+  "jobs": [
+    {
+      "id": 1,
+      "name": "Build",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 9,
+      "name": "refresh",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "expect": {
+    "outcome": "done",
+    "status": "ok",
+    "close": true,
+    "items": [
+      {
+        "name": "build",
+        "st": "ok"
+      },
+      {
+        "name": "deploy",
+        "st": "skip"
+      }
+    ]
+  }
+}

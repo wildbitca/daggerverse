@@ -1,0 +1,49 @@
+{
+  "why": "Nothing open but a row has no job yet (needs still running): do not close.",
+  "rows": [
+    {
+      "row": "build",
+      "match": "Build"
+    },
+    {
+      "row": "deploy",
+      "match": "Deploy",
+      "mode": "exact"
+    }
+  ],
+  "selfJob": "refresh",
+  "final": false,
+  "jobs": [
+    {
+      "id": 1,
+      "name": "Build",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 9,
+      "name": "refresh",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "expect": {
+    "outcome": "running",
+    "status": "running",
+    "close": false,
+    "items": [
+      {
+        "name": "build",
+        "st": "ok"
+      },
+      {
+        "name": "deploy",
+        "st": "pending"
+      }
+    ]
+  }
+}
