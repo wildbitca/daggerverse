@@ -1,0 +1,57 @@
+{
+  "why": "A job in progress keeps the card running; the self job is not counted.",
+  "rows": [
+    {
+      "row": "build",
+      "match": "Build"
+    },
+    {
+      "row": "deploy",
+      "match": "Deploy",
+      "mode": "exact"
+    }
+  ],
+  "selfJob": "refresh",
+  "final": false,
+  "jobs": [
+    {
+      "id": 1,
+      "name": "Build",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Deploy",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    },
+    {
+      "id": 9,
+      "name": "refresh",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "expect": {
+    "outcome": "running",
+    "status": "running",
+    "close": false,
+    "items": [
+      {
+        "name": "build",
+        "st": "ok"
+      },
+      {
+        "name": "deploy",
+        "st": "running"
+      }
+    ]
+  }
+}

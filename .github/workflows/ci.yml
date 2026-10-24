@@ -133,6 +133,10 @@ jobs:
       - name: runcard row fixtures
         run: runcard/test/run-fixtures.sh
 
+      # The decision behind `runcard.refresh`: close, keep running, or wait at an approval.
+      - name: runcard refresh fixtures
+        run: runcard/test/run-refresh-fixtures.sh
+
       # Every TestReport parser, merge rule and the feature mapper, on real report samples
       # (flutter/dart, vitest JSON + junit, lcov, istanbul, Stryker) plus Maestro's
       # golden-test JUnit shape. Each case states what it protects in `why`.

@@ -1,0 +1,58 @@
+{
+  "why": "final with a job still running closes it as fail (deadline).",
+  "rows": [
+    {
+      "row": "build",
+      "match": "Build"
+    },
+    {
+      "row": "deploy",
+      "match": "Deploy",
+      "mode": "exact"
+    }
+  ],
+  "selfJob": "refresh",
+  "final": true,
+  "jobs": [
+    {
+      "id": 1,
+      "name": "Build",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    },
+    {
+      "id": 2,
+      "name": "Deploy",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 9,
+      "name": "refresh",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "expect": {
+    "outcome": "deadline",
+    "status": "fail",
+    "close": true,
+    "items": [
+      {
+        "name": "build",
+        "st": "fail",
+        "note": "watcher deadline"
+      },
+      {
+        "name": "deploy",
+        "st": "ok"
+      }
+    ]
+  }
+}

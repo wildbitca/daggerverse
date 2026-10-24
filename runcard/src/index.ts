@@ -10,9 +10,17 @@
  * them, so each repo would need the same ~200-line watcher. `pacha/app` wrote it
  * first (`pipelineCardLive`, 2026-09-16); this is that prototype, shared.
  *
- * ── THREE SHAPES, ONE CARD LOOK ─────────────────────────────────────────────
+ * ── FOUR SHAPES, ONE CARD LOOK ──────────────────────────────────────────────
  *   · `watch`   multi-job workflows. A job with no `needs` polls the run's jobs
  *               through the GitHub API and rewrites the card as rows change.
+ *   · `refresh` the same card, event-driven: ONE pass, no polling. Jobs call it
+ *               when they finish (`needs` + `if: always()`), each pass renders the
+ *               run's current state and the last one (all jobs done, or `final`)
+ *               closes the card through the same path as `watch`. Use it when
+ *               holding a runner for the whole run (watch: the full duration) is
+ *               the cost; use `watch` when one self-contained job is simpler and
+ *               the runner time does not matter. Concurrent refreshes are
+ *               last-writer-wins on an idempotent render.
  *   · `report`  single-job workflows, as the job's last step. One post at the
  *               end; the steps are the rows. No second runner is paid for.
  *   · `thread`  post detail under an existing card, found by its metadata. A
@@ -57,7 +65,7 @@
  * that cannot read the run) — the failures that would otherwise hold a runner
  * until the deadline and render a card that lies.
  */
-import { dag, Directory, File, Secret, object, func } from "@dagger.io/dagger"
+import { dag, Directory, File, Secret, Slack, object, func } from "@dagger.io/dagger"
 
 type ItemState = "pending" | "running" | "ok" | "fail" | "skip"
 /** One card row, the shape `slack.render` takes. */
@@ -238,6 +246,58 @@ function reportsIn(raw: string, what: string): unknown[] {
   return arr
 }
 
+type Outcome = "done" | "approval" | "deadline" | "blind"
+
+/** Settle rows that are still pending/running once the watch (or a refresh) stops looking. */
+function finalizeItems(items: Item[], outcome: Outcome): Item[] {
+  return items.map((i): Item => {
+    if (i.st !== "pending" && i.st !== "running") return i
+    switch (outcome) {
+      case "done": return { ...i, st: "skip", note: i.note === "queued" ? "not run" : i.note }
+      // Rows downstream of the gate were never created. They are not failures:
+      // they have simply not been decided yet.
+      case "approval": return i.note === "awaiting approval" ? i : { name: i.name, st: "pending", note: "after approval" }
+      case "blind": return { ...i, st: "fail", note: "watcher could not read the run" }
+      default: return { ...i, st: "fail", note: "watcher deadline" }
+    }
+  })
+}
+
+/** Card status for settled rows: fail beats waiting beats ok. */
+function closingStatus(items: Item[], outcome: Outcome): string {
+  return items.some((i) => i.st === "fail") ? "fail" : outcome === "approval" ? "waiting" : "ok"
+}
+
+type RefreshOutcome = Outcome | "running"
+
+/**
+ * What one `refresh` pass should do, from the run's jobs alone (pure).
+ *
+ *   · done      every non-self job completed AND every row has a job (a job whose
+ *               `needs` are running is not listed yet), or `final` forces it
+ *   · approval  all that is open is parked on an environment approval
+ *   · deadline  `final` but jobs are still open: they are marked failed, not lost
+ *   · running   anything else; the card is updated in place
+ *
+ * `close` is true for done and deadline only. An approval is rendered ("awaiting
+ * approval", status waiting) but not closed: it posts no thread, so every refresh
+ * while the gate is shut can repeat it without duplicating anything.
+ */
+function decideRefresh(defs: RowDef[], jobs: GhJob[], selfJob: string, final: boolean): { items: Item[]; outcome: RefreshOutcome; status: string; close: boolean } {
+  const others = jobs.filter((j) => !isNamed(j.name, selfJob))
+  const open = others.filter((j) => j.status !== "completed")
+  const allRowsSeen = defs.every((_, i) => others.some((j) => rowIndexFor(defs, j.name) === i))
+  let outcome: RefreshOutcome
+  if (open.length === 0 && (allRowsSeen || final)) outcome = "done"
+  else if (open.length > 0 && open.every((j) => j.status === "waiting")) outcome = "approval"
+  else if (final) outcome = "deadline"
+  else outcome = "running"
+  const raw = computeRows(defs, jobs, selfJob)
+  if (outcome === "running") return { items: raw, outcome, status: "running", close: false }
+  const items = finalizeItems(raw, outcome)
+  return { items, outcome, status: closingStatus(items, outcome), close: outcome === "done" || outcome === "deadline" }
+}
+
 @object()
 export class Runcard {
   /**
@@ -406,33 +466,137 @@ export class Runcard {
       await sleep(pollSeconds * 1000)
     }
 
-    items = items.map((i): Item => {
-      if (i.st !== "pending" && i.st !== "running") return i
-      switch (outcome) {
-        case "done": return { ...i, st: "skip", note: i.note === "queued" ? "not run" : i.note }
-        // Rows downstream of the gate were never created. They are not failures:
-        // they have simply not been decided yet.
-        case "approval": return i.note === "awaiting approval" ? i : { name: i.name, st: "pending", note: "after approval" }
-        case "blind": return { ...i, st: "fail", note: "watcher could not read the run" }
-        default: return { ...i, st: "fail", note: "watcher deadline" }
-      }
+    items = finalizeItems(items, outcome)
+    const status = closingStatus(items, outcome)
+    await this.closeCard({
+      slack, token, githubToken, slackChannel, repo, runId, ts, render, items, status, outcome, trend, all, selfJob,
+      runStart, prices, workflowFile, branch, reportArtifacts, inHand, specs, coverageMap, bust,
     })
-    const failed = items.some((i) => i.st === "fail")
-    const status = failed ? "fail" : outcome === "approval" ? "waiting" : "ok"
-    const elapsed = Math.max(0, Date.now() - runStart)
-    const collected = reportArtifacts.trim() || inHand.length
-      ? await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), inHand, specs, coverageMap, bust())
-      : { report: "", notes: [] as string[] }
-    if (ts) {
-      await slack.post(token, slackChannel, await render(status, items, collected.report), { ts })
-    } else {
-      ts = await slack.post(token, slackChannel, await render(status, items, collected.report))
-    }
-    await slack.breakdown(token, slackChannel, ts, status, JSON.stringify(items), elapsed, { metrics: "", trend, report: collected.report })
-    if (collected.notes.length) await slack.threadReply(token, slackChannel, ts, collected.notes.join("\n"))
-    const stats = await this.runStats(githubToken, repo, runId, all, selfJob, runStart, outcome, prices, workflowFile, branch, bust())
-    await slack.threadReply(token, slackChannel, ts, stats)
     return status
+  }
+
+  /**
+   * ONE pass that brings the run's card up to date, then returns. Event-driven
+   * alternative to `watch`: call it from a job that runs when something changes
+   * (a job finishing, via `needs` + `if: always()`), so no runner is held polling.
+   * Returns `posted`, `updated`, `closed:<ok|fail>`, or `skipped` when there is
+   * no Slack token/channel.
+   *
+   * It looks the card up by (eventType, runId, runAttempt) and posts a new one only
+   * when none exists, reads the run's jobs once, renders the same rows as `watch`,
+   * and either updates the card in place (status running) or closes it exactly as
+   * `watch` does: final status, test reports merged from artifacts, feature map,
+   * breakdown and statistics in the thread. It closes when every job except
+   * `selfJob` has completed and each row has a job, or when `final` is true.
+   * Jobs parked on an approval render "awaiting approval" and the card shows
+   * `waiting`; that is not a close, so nothing is threaded and a later refresh
+   * carries it on once the gate opens.
+   *
+   * Concurrency: refreshers that run close together each render from the API's
+   * current state, so updates are idempotent and the last writer wins; a stale
+   * write is corrected by the next refresh. Two refreshers can still both post a
+   * NEW card if neither finds one yet (the first refresh of a run); the lookup
+   * before posting makes that rare, not impossible. Have the first job call it
+   * early, or accept a rare duplicate.
+   *
+   * Differences from `watch`: failed jobs are threaded once, at close (a one-shot
+   * has no memory of what it already posted); a `final` refresh with jobs still
+   * open marks them failed ("watcher deadline").
+   *
+   * @param selfJob the exact `name:` of the calling job; excluded from the rows and
+   *   the completion check. A name that matches no job is an error.
+   * @param final force the close even when a row has no job (an `if:` that skipped
+   *   it); set it on the last job of the workflow.
+   * @param rows, eventType, workflowFile, branch, runnerPrices, reportArtifacts,
+   *   testReports, testReportsFile, specs, coverageMap as in `watch`.
+   */
+  @func({ cache: "never" })
+  async refresh(
+    repo: string, ref: string, sha: string, actor: string, event: string,
+    runId: string, runNumber: string, runAttempt: string, server: string,
+    rows: string, selfJob: string, eventType: string,
+    githubToken: Secret, slackChannel: string,
+    slackToken?: Secret,
+    workflowFile = "", branch = "", msg = "", title = "", runnerPrices = "",
+    reportArtifacts = "", testReports = "", specs?: Directory, coverageMap?: File, testReportsFile?: File,
+    final = false,
+  ): Promise<string> {
+    if (!slackChannel.trim() || !(await present(slackToken))) return "skipped"
+    const token = slackToken as Secret
+    const defs = parseRows(rows)
+    assertEventType(eventType)
+    const inHand = [
+      ...reportsIn(testReports, "testReports"),
+      ...(testReportsFile ? reportsIn(await testReportsFile.contents(), "testReportsFile") : []),
+    ]
+    if (!selfJob.trim()) throw new Error("runcard: 'selfJob' is empty — the refresh would count its own job and never see the run finish")
+    const prices = { ...DEFAULT_PRICES, ...(parse<Record<string, number>>(runnerPrices, "runnerPrices") ?? {}) }
+    const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
+    const cardTitle = title || `${repo} · ${refName(ref)}`
+    const slack = dag.slack()
+    let polls = 0
+    const bust = () => `${runId}:${runAttempt}:refresh:${++polls}:${Date.now()}`
+
+    // The only API read. A token that cannot read the run is misconfiguration; a blip gets two retries.
+    let all: GhJob[] | undefined
+    for (let attempt = 0; attempt < 3 && !all; attempt++) {
+      try {
+        all = JSON.parse(await dag.github().runJobs(githubToken, repo, runId, runAttempt, bust())) as GhJob[]
+      } catch (e) {
+        console.error(`runcard: refresh read ${attempt + 1} failed:`, e)
+        if (attempt < 2) await sleep(5000)
+      }
+    }
+    if (!all) throw new Error(`runcard: refresh cannot read the jobs of run ${runId} in ${repo} — check that githubToken has actions: read`)
+    const self = all.find((j) => isNamed(j.name, selfJob))
+    if (!self) throw new Error(`runcard: selfJob '${selfJob}' matches no job in run ${runId} (jobs: ${all.map((j) => j.name).join(", ")})`)
+
+    // The run's start is the earliest job creation the API reports (queue time included).
+    const created = all.map((j) => Date.parse(j.created_at ?? "")).filter((x) => x > 0)
+    const runStart = created.length ? Math.min(...created) : Date.parse(self.started_at ?? "") || Date.now()
+    const plan = decideRefresh(defs, all, selfJob, final)
+
+    const trend = await slack.readTrend(token, slackChannel, eventType, repo, bust(), { excludeRunId: runId })
+    const render = (status: string, items: Item[], report = "") => slack.render(
+      cardTitle, status, JSON.stringify(meta), JSON.stringify(items), Math.max(0, Date.now() - runStart), eventType, { metrics: "", trend, report },
+    )
+    let ts = await this.cardTs(slackChannel, eventType, runId, token, runAttempt, 20)
+    if (!plan.close) {
+      if (ts) {
+        await slack.post(token, slackChannel, await render(plan.status, plan.items), { ts })
+        return "updated"
+      }
+      await slack.post(token, slackChannel, await render(plan.status, plan.items))
+      return "posted"
+    }
+    if (!ts) ts = await slack.post(token, slackChannel, await render("running", plan.items))
+    for (const j of all) {
+      if (!isNamed(j.name, selfJob) && j.id && j.status === "completed" && BAD.includes(j.conclusion ?? "") && j.conclusion !== "cancelled") {
+        await this.postJobFailure(githubToken, token, slackChannel, ts, repo, j, bust())
+      }
+    }
+    await this.closeCard({
+      slack, token, githubToken, slackChannel, repo, runId, ts, render, items: plan.items, status: plan.status, outcome: plan.outcome,
+      trend, all, selfJob, runStart, prices, workflowFile, branch, reportArtifacts, inHand, specs, coverageMap, bust,
+    })
+    return `closed:${plan.status}`
+  }
+
+  /**
+   * The decision `refresh` makes, exposed pure so it can be tested on fixtures.
+   * Returns JSON `{items, outcome, status, close}` (`outcome` is
+   * running|approval|done|deadline).
+   *
+   * @param jobs JSON `GhJob[]` — `github.runJobs` output or a fixture.
+   * @param rows JSON `[{row, match, mode}]`.
+   * @param selfJob the calling job's name, excluded as in `refresh`.
+   * @param final the `final` flag of `refresh`.
+   */
+  @func()
+  refreshPlan(jobs: string, rows: string, selfJob = "", final = false): string {
+    const js = parse<GhJob[]>(jobs, "jobs")
+    if (!Array.isArray(js)) throw new Error("runcard: 'jobs' must be a JSON array")
+    return JSON.stringify(decideRefresh(parseRows(rows), js, selfJob, final))
   }
 
   /**
@@ -614,6 +778,31 @@ export class Runcard {
       ...(testReportsFile ? reportsIn(await testReportsFile.contents(), "testReportsFile") : []),
     ]
     return JSON.stringify(await this.collectReports(githubToken, repo, runId, reportArtifacts.trim(), inHand, specs, coverageMap, cacheBust))
+  }
+
+  /** The closing path shared by `watch` and `refresh`: final card, breakdown, report notes, statistics. */
+  private async closeCard(c: {
+    slack: Slack; token: Secret; githubToken: Secret; slackChannel: string; repo: string; runId: string; ts: string
+    render: (status: string, items: Item[], report?: string) => Promise<string>
+    items: Item[]; status: string; outcome: string; trend: string; all: GhJob[]; selfJob: string; runStart: number
+    prices: Record<string, number>; workflowFile: string; branch: string; reportArtifacts: string; inHand: unknown[]
+    specs?: Directory; coverageMap?: File; bust: () => string
+  }): Promise<void> {
+    const { slack, token, slackChannel, items, status } = c
+    let ts = c.ts
+    const elapsed = Math.max(0, Date.now() - c.runStart)
+    const collected = c.reportArtifacts.trim() || c.inHand.length
+      ? await this.collectReports(c.githubToken, c.repo, c.runId, c.reportArtifacts.trim(), c.inHand, c.specs, c.coverageMap, c.bust())
+      : { report: "", notes: [] as string[] }
+    if (ts) {
+      await slack.post(token, slackChannel, await c.render(status, items, collected.report), { ts })
+    } else {
+      ts = await slack.post(token, slackChannel, await c.render(status, items, collected.report))
+    }
+    await slack.breakdown(token, slackChannel, ts, status, JSON.stringify(items), elapsed, { metrics: "", trend: c.trend, report: collected.report })
+    if (collected.notes.length) await slack.threadReply(token, slackChannel, ts, collected.notes.join("\n"))
+    const stats = await this.runStats(c.githubToken, c.repo, c.runId, c.all, c.selfJob, c.runStart, c.outcome, c.prices, c.workflowFile, c.branch, c.bust())
+    await slack.threadReply(token, slackChannel, ts, stats)
   }
 
   private async collectReports(

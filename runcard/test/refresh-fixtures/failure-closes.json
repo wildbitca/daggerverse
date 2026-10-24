@@ -1,0 +1,57 @@
+{
+  "why": "A failed job closes the card as fail.",
+  "rows": [
+    {
+      "row": "build",
+      "match": "Build"
+    },
+    {
+      "row": "deploy",
+      "match": "Deploy",
+      "mode": "exact"
+    }
+  ],
+  "selfJob": "refresh",
+  "final": false,
+  "jobs": [
+    {
+      "id": 1,
+      "name": "Build",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Deploy",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": "2026-09-17T01:10:00Z"
+    },
+    {
+      "id": 9,
+      "name": "refresh",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-09-17T01:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "expect": {
+    "outcome": "done",
+    "status": "fail",
+    "close": true,
+    "items": [
+      {
+        "name": "build",
+        "st": "fail"
+      },
+      {
+        "name": "deploy",
+        "st": "skip"
+      }
+    ]
+  }
+}
