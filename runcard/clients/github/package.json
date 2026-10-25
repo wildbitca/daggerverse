@@ -1,0 +1,15 @@
+{
+  "name": "@dagger.io/github",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./github.gen.ts",
+  "types": "./github.gen.ts",
+  "exports": {
+    ".": "./github.gen.ts"
+  },
+  "dependencies": {
+    "@dagger.io/dagger": "file:../dagger",
+    "@dagger.io/slack": "file:../slack",
+    "@dagger.io/testing": "file:../testing"
+  }
+}

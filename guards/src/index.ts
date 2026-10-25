@@ -132,7 +132,9 @@ class Report {
    */
   finish(hint: string): string {
     const out = this.lines.join("\n")
-    console.log(out)
+    // stderr, never stdout: a v1 module returns its result as JSON on stdout, so
+    // anything else printed there fails the call with `JSON.decode: invalid JSON`.
+    console.error(out)
     // ── THE BACKSTOP ────────────────────────────────────────────────────
     // Reaching the end having reported neither a pass nor a failure means the
     // guard looked at nothing, and returning here would report that as
@@ -608,9 +610,10 @@ export class Guards {
    * @param pairings      JSON array of CONDITIONAL rules — see `pairings` below.
    *                      "" means this repo declares none.
    * @param daggerVersion the CLI to install in the probe container. LEAVE IT EMPTY:
-   *                      it is then read from the module's own `dagger.json`
-   *                      `engineVersion`, which is the version this module is
-   *                      actually run with. Pass one only to deliberately probe
+   *                      it is then the module's own `dagger.json`
+   *                      `engineVersion`, or for a v1 module the version of the
+   *                      engine running this function, which is the version the
+   *                      module is actually run with. Pass one only to deliberately probe
    *                      with a different CLI than the pipeline uses.
    * @param token         a token that can read the private `daggerverse` repo. The
    *                      nested probe session has no git credentials of its own —
@@ -952,7 +955,7 @@ export class Guards {
    *
    * ── WHY IT NEEDS A TOKEN ────────────────────────────────────────────────
    * The nested session has NO git credentials. The helper lives on the host and
-   * only the OUTER CLI session forwards it, so a consumer whose `dagger.json`
+   * only the OUTER CLI session forwards it, so a consumer whose module config
    * names a private `daggerverse` dependency — which is now every one of them —
    * dies at module load with `failed to load git dep`, long before flag
    * parsing. See the inertness note on `daggerFlags`.
@@ -1035,7 +1038,7 @@ export class Guards {
       throw new Error(
         `guards: the flag probe never reached flag parsing, so NOTHING about this workflow's flags was verified. ` +
         `\`dagger call ${fn} ${flag}\` produced no '${PARSE_STAGE}' stage, which means the module did not load.\n\n` +
-        `The usual cause is a private \`daggerverse\` dependency in the consumer's dagger.json: the nested session has no git ` +
+        `The usual cause is a private \`daggerverse\` dependency in the consumer's module config: the nested session has no git ` +
         `credentials of its own, so pass --token with one that can read the daggerverse repo.\n\n` +
         `If the module loads fine by hand, the CLI may have renamed that stage; this guard fails rather than assuming success.\n\n` +
         `Last lines of the probe:\n${tail}`,
@@ -1577,7 +1580,7 @@ async function withDeadline<T>(work: Promise<T>, seconds: number, message: strin
 const SHADOWED = /cannot set field of type dagql\.\w+\[\*?[^\]]*?core\.(\w+)\] with dagql\.(\w+)/
 
 /**
- * The engine version the module under test declares, from its own `dagger.json`.
+ * The Dagger CLI version the module under test is run with.
  *
  * ── WHY IT IS DERIVED AND NOT DEFAULTED ─────────────────────────────────────
  * A probe running a different CLI from the pipeline measures the wrong thing —
@@ -1585,23 +1588,29 @@ const SHADOWED = /cannot set field of type dagql\.\w+\[\*?[^\]]*?core\.(\w+)\] w
  * proposed. A constant in THIS module is right on the day it is written and
  * silently wrong after the next engine bump, in every consumer at once, which is
  * the floating-pin-dressed-as-a-pin shape `toolchainPins` exists to kill. A
- * constant in each CONSUMER is one more copy of a number that already exists two
- * lines away.
+ * constant in each CONSUMER is one more copy of a number that already exists.
  *
- * It already lives in `<modulePath>/dagger.json` as `engineVersion` — the version
- * this very module is run with, so it cannot disagree with itself — and
- * `toolchainPins` ALREADY asserts that literal against `.toolchain-pins`
- * (`"engineVersion": "v{dagger}"`, a check every consumer carries). So reading it
- * needs no new pin, no new flag, and no new place to drift.
+ * Two sources, in order:
+ *  - A legacy module (`<modulePath>/dagger.json`) declares it as `engineVersion`,
+ *    the version this very module is run with, and `toolchainPins` asserts that
+ *    literal against `.toolchain-pins`.
+ *  - A v1 module (`dagger-module.toml`) records no engine version at all. The
+ *    engine running THIS function is then the answer: it is the one the
+ *    consumer's pipeline started, so its version is the CLI the pipeline uses.
  *
- * Unreadable or absent is a HARD failure: guessing a CLI version would make the
- * probe measure something nobody asked for.
+ * A `dagger.json` that exists but is unreadable or declares no usable version is
+ * a HARD failure: guessing a CLI version would make the probe measure something
+ * nobody asked for.
  */
 async function engineVersionOf(source: Directory, modulePath: string): Promise<string> {
   const path = `${modulePath.replace(/\/+$/, "")}/dagger.json`
   const raw = await readMaybe(source, path)
   if (raw === null) {
-    throw new Error(`guards: cannot read ${path}, so the probe cannot know which Dagger CLI the module under test is run with. A probe on a different CLI than the pipeline measures the wrong thing. Fix the path, or pass --dagger-version deliberately.`)
+    const running = await dag.version()
+    if (!/^v?\d+\.\d+\.\d+/.test(running)) {
+      throw new Error(`guards: ${path} does not exist and the running engine reports no usable version (got ${JSON.stringify(running)}). The probe will not guess which CLI to install; pass --dagger-version deliberately.`)
+    }
+    return running.replace(/^v/, "")
   }
   let v: unknown
   try {

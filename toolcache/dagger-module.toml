@@ -1,0 +1,5 @@
+name = "toolcache"
+
+[entrypoint]
+  kind = "dang"
+  source = "./entrypoint"

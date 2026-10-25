@@ -1,0 +1,15 @@
+{
+  "name": "@dagger.io/slack",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./slack.gen.ts",
+  "types": "./slack.gen.ts",
+  "exports": {
+    ".": "./slack.gen.ts"
+  },
+  "dependencies": {
+    "@dagger.io/dagger": "file:../dagger",
+    "@dagger.io/github": "file:../github",
+    "@dagger.io/testing": "file:../testing"
+  }
+}

@@ -65,7 +65,10 @@
  * that cannot read the run) — the failures that would otherwise hold a runner
  * until the deadline and render a card that lies.
  */
-import { dag, Directory, File, Secret, Slack, object, func } from "@dagger.io/dagger"
+import { Directory, File, Secret, object, func } from "@dagger.io/dagger"
+import { github as githubClient } from "@dagger.io/github"
+import { slack as slackClient, Slack } from "@dagger.io/slack"
+import { testing as testingClient } from "@dagger.io/testing"
 
 type ItemState = "pending" | "running" | "ok" | "fail" | "skip"
 /** One card row, the shape `slack.render` takes. */
@@ -367,8 +370,8 @@ export class Runcard {
     const prices = { ...DEFAULT_PRICES, ...(parse<Record<string, number>>(runnerPrices, "runnerPrices") ?? {}) }
     const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
     const cardTitle = title || `${repo} · ${refName(ref)}`
-    const slack = dag.slack()
-    const gh = dag.github()
+    const slack = slackClient()
+    const gh = githubClient()
     let polls = 0
     const bust = () => `${runId}:${runAttempt}:${++polls}:${Date.now()}`
 
@@ -533,7 +536,7 @@ export class Runcard {
     const prices = { ...DEFAULT_PRICES, ...(parse<Record<string, number>>(runnerPrices, "runnerPrices") ?? {}) }
     const meta = { repo, ref, sha, actor, event, runId, runNumber, runAttempt, server, msg: msg || sha.slice(0, 12) }
     const cardTitle = title || `${repo} · ${refName(ref)}`
-    const slack = dag.slack()
+    const slack = slackClient()
     let polls = 0
     const bust = () => `${runId}:${runAttempt}:refresh:${++polls}:${Date.now()}`
 
@@ -541,7 +544,7 @@ export class Runcard {
     let all: GhJob[] | undefined
     for (let attempt = 0; attempt < 3 && !all; attempt++) {
       try {
-        all = JSON.parse(await dag.github().runJobs(githubToken, repo, runId, runAttempt, bust())) as GhJob[]
+        all = JSON.parse(await githubClient().runJobs(githubToken, repo, runId, runAttempt, bust())) as GhJob[]
       } catch (e) {
         console.error(`runcard: refresh read ${attempt + 1} failed:`, e)
         if (attempt < 2) await sleep(5000)
@@ -642,12 +645,12 @@ export class Runcard {
       throw new Error(`runcard: jobStatus '${jobStatus}' is not success|failure|cancelled — pass \${{ job.status }}`)
     }
     const defs = rows.trim() ? parseRows(rows) : undefined
-    const slack = dag.slack()
+    const slack = slackClient()
     const bust = `${runId}:${runAttempt}:report:${Date.now()}`
 
     let jobs: GhJob[] = []
     try {
-      jobs = JSON.parse(await dag.github().runJobs(githubToken, repo, runId, runAttempt, bust)) as GhJob[]
+      jobs = JSON.parse(await githubClient().runJobs(githubToken, repo, runId, runAttempt, bust)) as GhJob[]
     } catch (e) {
       console.error("runcard: report could not read the run; posting without steps:", e)
     }
@@ -715,7 +718,7 @@ export class Runcard {
       console.error(`runcard: no '${eventType}' card for run ${runId}${runAttempt ? ` attempt ${runAttempt}` : ""} — detail not posted`)
       return ""
     }
-    return await dag.slack().threadReply(slackToken as Secret, slackChannel, ts, text, { blocks })
+    return await slackClient().threadReply(slackToken as Secret, slackChannel, ts, text, { blocks })
   }
 
   /**
@@ -731,7 +734,7 @@ export class Runcard {
     assertEventType(eventType)
     const until = Date.now() + Math.max(0, waitSeconds) * 1000
     for (let i = 0; ; i++) {
-      const ts = await dag.slack().findCard(slackToken as Secret, slackChannel, eventType, runId, `${runId}:${runAttempt}:find:${i}:${Date.now()}`, { runAttempt, limit: 200 })
+      const ts = await slackClient().findCard(slackToken as Secret, slackChannel, eventType, runId, `${runId}:${runAttempt}:find:${i}:${Date.now()}`, { runAttempt, limit: 200 })
       if (ts || Date.now() >= until) return ts
       await sleep(10_000)
     }
@@ -813,7 +816,7 @@ export class Runcard {
     const reports: unknown[] = [...inHand]
     if (artifactPrefix) {
       try {
-        const got = JSON.parse(await dag.github().runArtifactFiles(githubToken, repo, runId, artifactPrefix, `${bust}:artifacts`, { pattern: "**/*.json", maxBytes: 5000000, maxPages: 10 })) as {
+        const got = JSON.parse(await githubClient().runArtifactFiles(githubToken, repo, runId, artifactPrefix, `${bust}:artifacts`, { pattern: "**/*.json", maxBytes: 5000000, maxPages: 10 })) as {
           files: ArtifactFile[]; skipped: { artifact: string; path: string; reason: string }[]
         }
         for (const f of got.files) {
@@ -831,7 +834,7 @@ export class Runcard {
       }
     }
     if (!reports.length) return { report: "", notes }
-    const testing = dag.testing()
+    const testing = testingClient()
     try {
       let report = await testing.merge(JSON.stringify(reports))
       if (specs) {
@@ -857,7 +860,7 @@ export class Runcard {
       let tail = ""
       let note = ""
       if (j.conclusion !== "startup_failure") {
-        const f = JSON.parse(await dag.github().jobFailure(githubToken, repo, String(j.id), `${bust}:${j.id}`)) as {
+        const f = JSON.parse(await githubClient().jobFailure(githubToken, repo, String(j.id), `${bust}:${j.id}`)) as {
           failedStep: string; annotations: { level: string; title: string; message: string }[]; logTail: string; logNote: string
         }
         step = f.failedStep || step
@@ -871,7 +874,7 @@ export class Runcard {
         tail ? "```" + tail + "```" : "",
         note ? `_${note}_` : "",
       ].filter(Boolean).join("\n")
-      await dag.slack().threadReply(slackToken, channel, ts, text)
+      await slackClient().threadReply(slackToken, channel, ts, text)
     } catch (e) {
       console.error("runcard: posting a job failure failed:", e)
     }
@@ -910,7 +913,7 @@ export class Runcard {
     let medianLine = ""
     if (workflowFile) {
       try {
-        const runs = JSON.parse(await dag.github().workflowRunDurations(githubToken, repo, workflowFile, branch, 10, `${bust}:durations`)) as { id: number; ms: number }[]
+        const runs = JSON.parse(await githubClient().workflowRunDurations(githubToken, repo, workflowFile, branch, 10, `${bust}:durations`)) as { id: number; ms: number }[]
         const durs = runs.filter((r) => String(r.id) !== runId).map((r) => r.ms)
         const m = median(durs)
         if (m !== undefined) medianLine = ` — median of the last ${durs.length} green runs${branch ? ` on ${branch}` : ""}: ${fmtMin(m)}`

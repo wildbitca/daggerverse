@@ -1,0 +1,5 @@
+name = "identity"
+
+[entrypoint]
+  kind = "dang"
+  source = "./entrypoint"

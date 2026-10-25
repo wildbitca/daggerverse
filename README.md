@@ -29,9 +29,30 @@ The same was true of the guard scripts: `check-shared-pins.sh` (257 lines) and
 
 ## Consuming a module
 
-```sh
-dagger install https://github.com/wildbitca/daggerverse/slack@slack/v0.1.0
+These modules use the Dagger v1 module format (`dagger-module.toml`, engine
+`1.0.0-beta.21` or newer). A TypeScript consumer module lists them as clients of its
+SDK scope in the workspace `dagger.toml`, pinned to the commit a release tag points at
+(`git rev-parse slack/v0.5.0^{commit}`):
+
+```toml
+[sdks.typescript.scopes.".github/dagger"]
+is-module = true
+clients = [
+  "https://github.com/wildbitca/daggerverse/slack@<commit of slack/vX.Y.Z>",
+]
 ```
+
+then runs `dagger generate -y` at the workspace root, which writes the typed client to
+`<module>/clients/slack` and links it in `package.json`. Code imports it as a package:
+
+```ts
+import { slack } from "@dagger.io/slack"
+
+await slack().render({ /* … */ })
+```
+
+The pre-v1 `dag.slack()` accessor only exists in modules generated in compat mode; new
+code should not rely on it.
 
 **Write the `https://` scheme.** The scheme-less form — `github.com/wildbitca/…` — makes
 the resolver try SSH first. Both forms work now that the repository is public, but the
@@ -464,8 +485,12 @@ existing convention is the repo name (`pacha-app-*`, `pacha-api-*`, `pacha-site-
 Per-module semver tags, `<module>/vX.Y.Z` — the Go submodule convention, which is what
 Dagger's resolver follows for modules in a subdirectory. Consumers pin a **tag, never
 `@main`**: a bug in a shared module must not be able to turn four pipelines red at once
-without anyone having chosen it. `dagger.json` records both the version and the resolved
-commit.
+without anyone having chosen it. The v1 `dagger.toml` records only the resolved commit, so
+the consumer's `.toolchain-pins` keeps the tag next to it and its guards assert the pair.
+
+Tags before the v1 module format (`slack/v0.4.0`, `guards/v0.1.3`, … — everything cut
+before 2026-10-25) carry a `dagger.json` for engine `v0.21.9`; a v1 engine still loads
+them in compat mode.
 
 - **Changelog.** Each module has its own `<module>/CHANGELOG.md`, newest first. The entry
   goes in the same change that bumps the version, not afterwards.

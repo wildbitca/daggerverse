@@ -3,7 +3,7 @@
 # ── WHY THIS FILE IS HERE AND NOT IN THE CONSUMERS ──────────────────────────
 # Named as a debt by `repo-ops` on 2026-09-05, and it is the right diagnosis:
 # the consumer-side chain (`daggerverse_scan=0.1.0` + its resolved commit,
-# asserted against `dagger.json`) enforces DELIBERATENESS, not VALUE. It
+# asserted against the module config) enforces DELIBERATENESS, not VALUE. It
 # guarantees the gitleaks version cannot change without a number moving in
 # somebody's diff. It does not guarantee the number is the one ADR-0003 §2.2
 # pins.
@@ -33,10 +33,11 @@
 gitleaks=8.21.2
 trivy=0.58.0
 
-# ── The Dagger engine every module declares. All eight dagger.json must agree:
-#    a consumer resolving two modules built for different engines is a failure
-#    mode with no symptom until something in the API moved between them.
-dagger=0.21.9
+# ── The Dagger CLI and engine CI runs every module with. The v1 module format
+#    (dagger-module.toml) no longer records an engine version, so the CI install
+#    in ci.yml is the one place it lives, and the SDK itself is pinned in
+#    dagger.lock.
+dagger=1.0.0-beta.21
 
 # ── Base images. Pinned so a rebuild cannot silently change what the guards run
 #    inside. `alpine:3.24` and `alpine:3.22` differ on purpose: PROBE_IMG lags

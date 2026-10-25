@@ -1,3 +1,13 @@
 {
-  "type": "module"
-,"dependencies":{"typescript":"5.9.3"}}
+  "type": "module",
+  "dependencies": {
+    "@dagger.io/dagger": "file:./clients/dagger",
+    "@dagger.io/github": "file:./clients/github",
+    "@dagger.io/slack": "file:./clients/slack",
+    "@dagger.io/testing": "file:./clients/testing",
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24"
+  }
+}

@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  DAGGER_VERSION: "0.21.9"
+  DAGGER_VERSION: "1.0.0-beta.21"
 
 jobs:
   ci:
@@ -76,32 +76,39 @@ jobs:
       # load — it transpiles them — so a type error ships and surfaces at call time
       # as an unreadable runtime failure in whichever consumer hit it first.
       #
-      # ⚠️ `dagger develop` FIRST, and it is not optional. Each module's `sdk/` is
-      # generated, not committed (`/sdk` is in every module's .gitignore), so on a
-      # fresh checkout `@dagger.io/dagger` does not exist and every file fails with
-      # TS2307 — plus a tail of cascading TS7006s that look like real type errors
-      # and are not. This step failed exactly that way on its first run
-      # (33986996074) because it was written on a machine where `sdk/` happened to
-      # be lying around from earlier `dagger develop` runs.
+      # Since the v1 module format the generated clients are COMMITTED (each
+      # module's `clients/`, `entrypoint/` and `__dagger.dispatch.ts`, written by
+      # `dagger generate` from the workspace `dagger.toml`), so a fresh checkout
+      # already has `@dagger.io/dagger`; `npm install` only links those local
+      # packages and pulls typescript and @types/node.
       #
-      # Reproduce before editing this step: `git clone` to a fresh directory and
-      # run it there. A local pass proves nothing here — the thing that makes it
-      # pass locally is the thing CI does not have.
+      # The first step proves the committed code is what `dagger generate` writes
+      # today: a module whose sources changed shape without regenerating would
+      # typecheck against stale clients and fail only at call time.
+      - name: Generated clients are current
+        run: |
+          set -euo pipefail
+          dagger --progress plain generate -y >/dev/null
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            echo "::error title=Stale generated code::run 'dagger generate -y' at the repo root and commit the result"
+            exit 1
+          fi
+
       - name: Typecheck every module
         run: |
           set -euo pipefail
           rc=0
           for m in slack scan guards github identity testing runcard toolcache; do
             echo "── $m"
-            dagger develop -m "./$m" >/dev/null
-            ( cd "$m" && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
+            ( cd "$m" && npm install --no-audit --no-fund --ignore-scripts --no-package-lock >/dev/null \
+              && npx -y -p typescript@5.9.3 tsc --noEmit -p tsconfig.json ) || rc=1
           done
           exit $rc
 
-      # Every module must declare the same engine, and `dagger functions` is the
-      # cheapest proof that each one still LOADS. A module that compiles but whose
-      # decorators no longer register lists nothing, and would otherwise be found
-      # by a consumer.
+      # `dagger functions` is the cheapest proof that each module still LOADS. A
+      # module that compiles but whose decorators no longer register lists
+      # nothing, and would otherwise be found by a consumer.
       - name: Every module loads and exposes functions
         run: |
           set -euo pipefail

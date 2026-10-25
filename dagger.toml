@@ -1,0 +1,30 @@
+[modules.dagger-typescript-sdk]
+source = "github.com/dagger/typescript-sdk"
+
+[sdks.typescript]
+module = "dagger-typescript-sdk"
+
+[sdks.typescript.scopes.slack]
+is-module = true
+
+[sdks.typescript.scopes.scan]
+is-module = true
+
+[sdks.typescript.scopes.guards]
+is-module = true
+
+[sdks.typescript.scopes.github]
+is-module = true
+
+[sdks.typescript.scopes.identity]
+is-module = true
+
+[sdks.typescript.scopes.testing]
+is-module = true
+
+[sdks.typescript.scopes.toolcache]
+is-module = true
+
+[sdks.typescript.scopes.runcard]
+clients = ["./github", "./slack", "./testing"]
+is-module = true

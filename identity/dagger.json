@@ -1,7 +1,0 @@
-{
-  "name": "identity",
-  "engineVersion": "v0.21.9",
-  "sdk": {
-    "source": "typescript"
-  }
-}

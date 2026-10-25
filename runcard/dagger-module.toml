@@ -1,0 +1,5 @@
+name = "runcard"
+
+[entrypoint]
+  kind = "dang"
+  source = "./entrypoint"
