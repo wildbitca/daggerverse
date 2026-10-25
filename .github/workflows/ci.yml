@@ -52,6 +52,25 @@ jobs:
           curl -fsSL https://dl.dagger.io/dagger/install.sh \
             | DAGGER_VERSION="${DAGGER_VERSION}" BIN_DIR=/usr/local/bin sudo -E sh
 
+      # Since the v1 module format the generated clients are COMMITTED (each
+      # module's `clients/`, `entrypoint/` and `__dagger.dispatch.ts`, written by
+      # `dagger generate` from the workspace `dagger.toml`), so a fresh checkout
+      # already has `@dagger.io/dagger`; `npm install` only links those local
+      # packages and pulls typescript and @types/node.
+      #
+      # The staleness check runs FIRST, before any other dagger call: every call
+      # records the images it resolves in dagger.lock, so after one the lock is
+      # dirty for reasons that have nothing to do with generated code.
+      - name: Generated clients are current
+        run: |
+          set -euo pipefail
+          dagger --progress plain generate -y >/dev/null
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            echo "::error title=Stale generated code::run 'dagger generate -y' at the repo root and commit the result"
+            exit 1
+          fi
+
       # The value check the consumers CANNOT do. Their chain asserts that the
       # dependency version and its resolved commit move together — deliberateness.
       # Nothing over there can say the constant IS 8.21.2, because `scan`'s source
@@ -76,25 +95,6 @@ jobs:
       # load — it transpiles them — so a type error ships and surfaces at call time
       # as an unreadable runtime failure in whichever consumer hit it first.
       #
-      # Since the v1 module format the generated clients are COMMITTED (each
-      # module's `clients/`, `entrypoint/` and `__dagger.dispatch.ts`, written by
-      # `dagger generate` from the workspace `dagger.toml`), so a fresh checkout
-      # already has `@dagger.io/dagger`; `npm install` only links those local
-      # packages and pulls typescript and @types/node.
-      #
-      # The first step proves the committed code is what `dagger generate` writes
-      # today: a module whose sources changed shape without regenerating would
-      # typecheck against stale clients and fail only at call time.
-      - name: Generated clients are current
-        run: |
-          set -euo pipefail
-          dagger --progress plain generate -y >/dev/null
-          if [ -n "$(git status --porcelain)" ]; then
-            git status --short
-            echo "::error title=Stale generated code::run 'dagger generate -y' at the repo root and commit the result"
-            exit 1
-          fi
-
       - name: Typecheck every module
         run: |
           set -euo pipefail
