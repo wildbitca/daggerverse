@@ -1610,7 +1610,9 @@ async function engineVersionOf(source: Directory, modulePath: string): Promise<s
     if (!/^v?\d+\.\d+\.\d+/.test(running)) {
       throw new Error(`guards: ${path} does not exist and the running engine reports no usable version (got ${JSON.stringify(running)}). The probe will not guess which CLI to install; pass --dagger-version deliberately.`)
     }
-    return running.replace(/^v/, "")
+    // The engine reports build metadata (`v1.0.0-beta.21+a7a2e64e`); install.sh
+    // takes the bare release and answers 403 for a version carrying the suffix.
+    return running.replace(/^v/, "").replace(/\+.*$/, "")
   }
   let v: unknown
   try {
