@@ -81,6 +81,36 @@ async function invoke(
           return __result
         }
 
+        case "languageAdded": {
+          const __parent = rebuildGuards(parentJson)
+          const __arg_source = args["source"] === undefined || args["source"] === null ? args["source"] : __loadCoreObject(args["source"], "Directory")
+          const __arg_base = args["base"]
+          const __arg_annotate = args["annotate"]
+          const __result = await __parent.languageAdded(__arg_source, __arg_base, __arg_annotate)
+          return __result
+        }
+
+        case "languageRatchet": {
+          const __parent = rebuildGuards(parentJson)
+          const __arg_source = args["source"] === undefined || args["source"] === null ? args["source"] : __loadCoreObject(args["source"], "Directory")
+          const __arg_files = args["files"] === undefined || args["files"] === null ? args["files"] : args["files"]
+          const __arg_declaredMixed = args["declaredMixed"]
+          const __arg_annotate = args["annotate"]
+          const __result = await __parent.languageRatchet(__arg_source, __arg_files, __arg_declaredMixed, __arg_annotate)
+          return __result
+        }
+
+        case "runBlockSize": {
+          const __parent = rebuildGuards(parentJson)
+          const __arg_source = args["source"] === undefined || args["source"] === null ? args["source"] : __loadCoreObject(args["source"], "Directory")
+          const __arg_workflows = args["workflows"] === undefined || args["workflows"] === null ? args["workflows"] : args["workflows"]
+          const __arg_ceiling = args["ceiling"]
+          const __arg_warnAt = args["warnAt"]
+          const __arg_annotate = args["annotate"]
+          const __result = await __parent.runBlockSize(__arg_source, __arg_workflows, __arg_ceiling, __arg_warnAt, __arg_annotate)
+          return __result
+        }
+
         case "sharedPins": {
           const __parent = rebuildGuards(parentJson)
           const __arg_source = args["source"] === undefined || args["source"] === null ? args["source"] : __loadCoreObject(args["source"], "Directory")

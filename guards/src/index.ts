@@ -1074,6 +1074,189 @@ export class Guards {
     }
     return null
   }
+
+  /**
+   * Fail when a workflow `run:` block is close to GitHub's expression-length limit.
+   *
+   * ── WHY (2026-09-09) ────────────────────────────────────────────────────
+   * A workflow stopped being a valid WORKFLOW — not invalid YAML — with
+   * `Exceeded max expression length 21000`: the run died at startup with ZERO jobs.
+   * The cause was comments: one step reached 20,927 characters against 21,000, of which
+   * 13,876 were prose that belonged in a spec. `yaml.safe_load` passed; it proves the
+   * file is YAML, and GitHub's limits live in the second reading.
+   *
+   * GitHub counts the `run:` block AFTER block-scalar dedentation and nothing else
+   * (measured: dedented 20,927 == GitHub's number, delta 0), so that is what is measured.
+   *
+   * The ceiling sits far below the limit on purpose: crossing it is a prompt to move prose
+   * to a spec, not an outage. `workflows` is explicit — a new workflow is covered only
+   * once it is listed — and a listed file that is missing or has no `run:` block is a
+   * FAILURE: a guard that shrugs at a rename has stopped guarding.
+   *
+   * @param source    repo root
+   * @param workflows JSON array of workflow paths relative to `source`
+   * @param ceiling   fail above this many characters (must stay below GitHub's 21000)
+   * @param warnAt    note above this many characters
+   * @param annotate  emit `::error::` annotations (pass true from GitHub Actions)
+   */
+  @func()
+  async runBlockSize(source: Directory, workflows: string, ceiling = 12000, warnAt = 8000, annotate = false): Promise<string> {
+    const r = new Report("runBlockSize", annotate)
+    const list = parseJson<string[]>(workflows, "workflows") ?? []
+    if (list.length === 0) {
+      throw new Error("guards: 'workflows' is empty — with no file listed this guard measures nothing and would report on a set it never populated.")
+    }
+    if (ceiling >= GITHUB_RUN_LIMIT) {
+      throw new Error(`guards: ceiling ${ceiling} is at or above GitHub's own limit of ${GITHUB_RUN_LIMIT}, which makes this guard a restatement of the outage instead of a warning before it`)
+    }
+    for (const name of list) {
+      const text = await readMaybe(source, name)
+      if (text === null) { r.bad(`${name} does not exist — renamed?`, "run block size"); continue }
+      const blocks = runBlocks(text).sort((a, b) => b.size - a.size)
+      if (blocks.length === 0) { r.bad(`${name} declares no run: block at all — did the scanner break?`, "run block size"); continue }
+      let over = 0
+      for (const b of blocks) {
+        if (b.size > ceiling) {
+          over++
+          r.bad(`${name}:${b.line} step '${b.step}' has a run: block of ${b.size} chars, over the ${ceiling} ceiling (GitHub's hard limit is ${GITHUB_RUN_LIMIT}, and crossing it takes the whole workflow down with zero jobs). Move the reasoning to a spec and leave a one-line pointer.`, "run block size")
+        } else if (b.size > warnAt) {
+          r.note(`WARN ${name}:${b.line} step '${b.step}' has a run: block of ${b.size} chars, over the ${warnAt} warning line. Still safe; worth moving prose out before it is not.`)
+        }
+      }
+      const big = blocks[0]
+      if (over === 0) r.ok(`${name}: largest run block ${big.size} chars (${Math.round((100 * big.size) / GITHUB_RUN_LIMIT)}% of ${GITHUB_RUN_LIMIT}) at line ${big.line}, step '${big.step}'`)
+    }
+    return r.finish("Shrink the block, or move its comments to a spec. The limit counts the dedented run: body.")
+  }
+
+  /**
+   * The English-only RATCHET: the files that are English today must stay English.
+   *
+   * It protects what is already clean and is silent about the file where the defect most
+   * often happens (a fresh block in an already-mixed file) — that is `languageAdded`'s job.
+   * Neither answers the other's question, so they are two functions and not one verdict.
+   *
+   * A listed file that does not exist is a FAILURE: a rename silently leaving the list is
+   * how a ratchet stops ratcheting. Spanish that is correct (a quoted log line, product
+   * copy, a detector's own word list) is excluded with a counted
+   * `lang-guard: off` … `lang-guard: on` region — ANCHORED to the first thing after the
+   * comment character, because an unanchored marker let prose that merely mentioned it
+   * silence 191 lines while the guard passed.
+   *
+   * Detector: distinctly Spanish function words plus Spanish-only characters, both needed
+   * to clear a bar — either alone is noisy.
+   *
+   * @param source        repo root
+   * @param files         JSON array of file paths that must stay English
+   * @param declaredMixed optional JSON object {path: spanishLineCount}; reported, never checked
+   * @param annotate      emit `::error::` annotations (pass true from GitHub Actions)
+   */
+  @func()
+  async languageRatchet(source: Directory, files: string, declaredMixed = "", annotate = false): Promise<string> {
+    const r = new Report("languageRatchet", annotate)
+    const list = parseJson<string[]>(files, "files") ?? []
+    if (list.length === 0) {
+      throw new Error("guards: 'files' is empty — a ratchet over no files holds nothing and would report green.")
+    }
+    const mixed = parseJson<Record<string, number>>(declaredMixed, "declaredMixed") ?? {}
+    let held = 0
+    for (const name of list) {
+      const text = await readMaybe(source, name)
+      if (text === null) { r.bad(`${name} is on the English-only list and does not exist — renamed?`, "language ratchet"); continue }
+      const all = text.split("\n")
+      const quiet = suppressedLines(all)
+      let bad = 0
+      all.forEach((l, i) => {
+        if (quiet.has(i + 1) || LANG_OFF.test(l) || LANG_ON.test(l)) return
+        if (looksSpanish(l)) { bad++; r.bad(`${name}:${i + 1} reads as Spanish: ${l.trim().slice(0, 110)}`, "language ratchet") }
+      })
+      if (bad === 0) held++
+      if (quiet.size) r.note(`suppressed by a lang-guard region: ${quiet.size} line(s) in ${name}`)
+    }
+    const debt = Object.values(mixed).reduce((a, b) => a + b, 0)
+    if (held > 0) r.ok(`${held} file(s) held English; ${Object.keys(mixed).length} declared-mixed file(s) excluded (${debt} lines of debt)`)
+    return r.finish("Translate the flagged lines, or wrap genuinely-Spanish evidence in a lang-guard off/on region.")
+  }
+
+  /**
+   * The English-only guard for NEW text: the lines the branch ADDS must be English, in any file.
+   *
+   * Prose that is moved keeps its language; prose authored from scratch takes the language
+   * of the file it lands in — so the next defect is a fresh block in an already-mixed file,
+   * which the ratchet cannot see. This reads `git diff --unified=0 <base>...HEAD`.
+   *
+   * It FAILS CLOSED when the diff cannot be answered — no `.git` in `source`, a shallow
+   * clone, or a base that does not resolve — because "0 added lines" from a place that
+   * cannot see git is the same false green as a scan over a missing directory. Pass a
+   * source that includes `.git` with full history. HEAD == base is reported out loud, not
+   * passed in silence. A diff carries no knowledge of the off-region a `+` line lands in,
+   * so hunk headers are tracked and suppression applies here exactly as in the ratchet.
+   *
+   * @param source   repo root, INCLUDING its .git directory, full history
+   * @param base     diff base; empty tries origin/main then main
+   * @param annotate emit `::error::` annotations (pass true from GitHub Actions)
+   */
+  @func()
+  async languageAdded(source: Directory, base = "", annotate = false): Promise<string> {
+    const r = new Report("languageAdded", annotate)
+    const script = [
+      "cd /w || exit 0",
+      "git config --global --add safe.directory /w",
+      "git rev-parse --git-dir >/dev/null 2>&1 || { echo 'ERR:no git repository'; exit 0; }",
+      "[ \"$(git rev-parse --is-shallow-repository 2>/dev/null)\" = true ] && { echo 'ERR:shallow checkout'; exit 0; }",
+      "base=''",
+      "for ref in " + (base ? shq(base) : "origin/main main") + "; do git rev-parse --verify --quiet \"$ref^{commit}\" >/dev/null && { base=$ref; break; }; done",
+      "[ -n \"$base\" ] || { echo 'ERR:no base resolves'; exit 0; }",
+      "[ \"$(git rev-parse HEAD)\" = \"$(git rev-parse \"$base\")\" ] && { echo \"SAME:$base\"; exit 0; }",
+      "echo \"BASE:$base\"",
+      "git diff --unified=0 \"$base...HEAD\" || echo 'ERR:git diff failed'",
+    ].join("\n")
+    const out = await dag.container().from(PROBE_IMG)
+      .withExec(["apk", "add", "--no-cache", "git"])
+      .withMountedDirectory("/w", source)
+      .withExec(["sh", "-c", script])
+      .stdout()
+    const first = out.split("\n", 1)[0]
+    if (first.startsWith("ERR:")) {
+      throw new Error(`guards: languageAdded cannot read the added lines (${first.slice(4)}). Failing rather than reporting zero. The source must include .git with full history, or base must resolve.`)
+    }
+    if (first.startsWith("SAME:")) {
+      r.ok(`HEAD == ${first.slice(5)}: no commits under test, nothing to check`)
+      return r.finish("")
+    }
+    if (!first.startsWith("BASE:")) throw new Error("guards: languageAdded got an unreadable answer from git: " + first)
+    const resolved = first.slice(5)
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/
+    let current: string | null = null
+    let quiet = new Set<number>()
+    let newLine = 0
+    let bad = 0, checked = 0, silenced = 0
+    for (const line of out.split("\n").slice(1)) {
+      if (line.startsWith("+++ b/")) {
+        current = line.slice(6)
+        quiet = new Set()
+        if (LANG_SUFFIXES.some((s) => current!.endsWith(s))) {
+          const t = await readMaybe(source, current)
+          if (t !== null) quiet = suppressedLines(t.split("\n"))
+        }
+        continue
+      }
+      const m = hunk.exec(line)
+      if (m) { newLine = Number(m[1]); continue }
+      if (line.startsWith("-")) continue
+      if (!line.startsWith("+") || line.startsWith("+++")) { newLine++; continue }
+      if (!current || !LANG_SUFFIXES.some((s) => current!.endsWith(s))) { newLine++; continue }
+      const t = line.slice(1)
+      if (quiet.has(newLine) || LANG_OFF.test(t) || LANG_ON.test(t)) silenced++
+      else {
+        checked++
+        if (looksSpanish(t)) { bad++; r.bad(`${current}:${newLine} adds a line that reads as Spanish: ${t.trim().slice(0, 110)}`, "language added") }
+      }
+      newLine++
+    }
+    if (bad === 0) r.ok(`base ${resolved}, ${checked} added line(s) in checked files, 0 in Spanish${silenced ? `, ${silenced} suppressed by an off-region` : ""}`)
+    return r.finish("Write the added lines in English.")
+  }
 }
 
 // ── toolchain pins: types and parsing ────────────────────────────────────────
@@ -1642,3 +1825,85 @@ function stripAnsi(s: string): string { return s.replace(ANSI, "") }
 
 /** Single-quote for `sh -c`. The values are function and flag names read from a workflow. */
 function shq(s: string): string { return `'${s.replace(/'/g, `'\\''`)}'` }
+
+// ── run-block size + language helpers ─────────────────────────────────────────
+
+/** GitHub's hard limit on a workflow expression. Not a knob. */
+const GITHUB_RUN_LIMIT = 21000
+
+interface RunBlock { size: number; lines: number; line: number; step: string }
+
+/**
+ * Every `run:` block as (size after dedentation, lines, first line, step name) — measured
+ * the way GitHub measures it. Indentation-based on purpose: no YAML parser, because the
+ * limit is about the text, and a parser would hand back the already-folded value.
+ */
+function runBlocks(text: string): RunBlock[] {
+  const all = text.split("\n")
+  const indent = (s: string) => s.length - s.trimStart().length
+  const out: RunBlock[] = []
+  let name = "(unnamed step)"
+  let i = 0
+  while (i < all.length) {
+    const nm = /^\s*-?\s*name:\s*(.+)$/.exec(all[i])
+    if (nm && !all[i].includes("run:")) name = nm[1].trim()
+    const rm = /^(\s*)run:\s*[|>]/.exec(all[i])
+    if (rm) {
+      const own = rm[1].length
+      const body: string[] = []
+      let j = i + 1
+      while (j < all.length) {
+        if (all[j].trim() && indent(all[j]) <= own) break
+        body.push(all[j])
+        j++
+      }
+      const live = body.filter((b) => b.trim()).map(indent)
+      const base = live.length ? Math.min(...live) : 0
+      const dedented = body.map((b) => (b.length >= base ? b.slice(base) : b)).join("\n")
+      out.push({ size: dedented.length, lines: body.length, line: i + 1, step: name })
+      i = j
+      continue
+    }
+    i++
+  }
+  return out
+}
+
+// lang-guard: off  (the word list IS Spanish; that is the point of it)
+const SPANISH_WORDS = new RegExp(
+  "(?<![\\p{L}\\p{N}_])(el|la|los|las|del|que|para|con|se|por|sin|esta|este|esto|como|pero|porque|" +
+  "todo|hay|ya|solo|s[oó]lo|nada|cada|otra|otro|dos|muy|sus|nos|les|aqu[ií]|ac[aá]|" +
+  "m[aá]s|as[ií]|donde|cuando|nunca|siempre|tambi[eé]n|hace|hacer|tiene|tener|puede|" +
+  "poder|deja|dejar|corre|corrida|fichero|guardia|techo|disco|salida|entrada|" +
+  "arriba|abajo|antes|despu[eé]s|mismo|misma|cosa|vez|veces)(?![\\p{L}\\p{N}_])",
+  "giu",
+)
+const SPANISH_ONLY_CHARS = /[áéíóúüñ¿¡]/i
+const SPANISH_DECISIVE = /[\u00bf\u00a1]/
+// lang-guard: on
+
+const LANG_OFF = /^\s*(?:#|\/\/)\s*lang-guard:\s*off\b/
+const LANG_ON = /^\s*(?:#|\/\/)\s*lang-guard:\s*on\b/
+/** Only text we own: a Spanish string in a fixture or a quoted log is evidence, not prose. */
+const LANG_SUFFIXES = [".ts", ".py", ".sh", ".yml", ".yaml"]
+
+function looksSpanish(line: string): boolean {
+  const s = line.trim()
+  if (!s) return false
+  const hits = (s.match(SPANISH_WORDS) ?? []).length
+  if (SPANISH_DECISIVE.test(s)) return true
+  if (SPANISH_ONLY_CHARS.test(s) && hits >= 1) return true
+  return hits >= 3
+}
+
+/** 1-based numbers of the lines inside a `lang-guard` off-region, in the file as it stands. */
+function suppressedLines(all: string[]): Set<number> {
+  const out = new Set<number>()
+  let live = true
+  all.forEach((l, i) => {
+    if (LANG_OFF.test(l)) { live = false; return }
+    if (LANG_ON.test(l)) { live = true; return }
+    if (!live) out.add(i + 1)
+  })
+  return out
+}

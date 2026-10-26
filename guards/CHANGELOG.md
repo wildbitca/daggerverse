@@ -3,6 +3,12 @@
 Newest first. Format and rules: [Versioning](../README.md#versioning). Releases older than
 the first entry: `git tag -l 'guards/v*'` and `git log --oneline -- guards/`.
 
+## v0.3.0 — 2026-10-26
+
+New: `runBlockSize` (fails when a workflow `run:` block nears GitHub's 21000-character expression limit), `languageRatchet` (files that are English today must stay English) and `languageAdded` (lines a branch adds must be English; needs `.git` with full history in `source`). They replace `scripts/check-run-block-size.py` and `scripts/check-language.py` that each repo carried.
+
+Breaking: none
+
 ## v0.2.1 — 2026-10-25
 
 Fix: `daggerFlags` without `daggerVersion` on a v1 module dropped the engine's build
